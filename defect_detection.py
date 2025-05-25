@@ -756,6 +756,11 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             self.textBrowser.append("警告: 所有检测类型已关闭，将无法进行缺陷检测！")
 
 
+
+
+
+
+
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     window = DefectDetectionApp()
