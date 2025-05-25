@@ -14,7 +14,7 @@ try:
 except ImportError:
     _has_serial = False
 
-#缺陷检测detect.py
+# 缺陷检测detect.py
 import time
 from pathlib import Path
 import csv
@@ -28,7 +28,6 @@ from utils.datasets import LoadImages
 from utils.general import check_img_size, non_max_suppression, scale_coords, xyxy2xywh, set_logging
 from utils.torch_utils import select_device, time_synchronized
 from utils.plots import plot_one_box
-
 # 凹坑检测代码
 def dent_detect(weights='weights/aoxian&huahen.pt', source='data/val', img_size=640, conf_thres=0.25,
                 iou_thres=0.45, device='', classes=1, agnostic_nms=False, augment=False,
@@ -142,7 +141,6 @@ def dent_detect(weights='weights/aoxian&huahen.pt', source='data/val', img_size=
     # 关闭CSV文件
     csv_file.close()
     return dent_counter
-
 # 划痕检测代码
 def scratch_detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf_thres=0.25,
                    iou_thres=0.45, device='', classes=0, agnostic_nms=False, augment=False,
@@ -256,7 +254,6 @@ def scratch_detect(weights='weights/aoxian&huahen.pt', source='data', img_size=6
     # 关闭CSV文件
     csv_file.close()
     return scratch_counter
-
 # 均可检测代码
 def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf_thres=0.25,
            iou_thres=0.45, device='', classes=None, agnostic_nms=False, augment=False,
@@ -372,7 +369,7 @@ def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf
     return detect_counter
 
 
-#颜色识别代码color_detection
+# 颜色识别代码color_detection
 def detect_color(image_path):
     image = cv2.imread(image_path)
 
@@ -421,6 +418,25 @@ def detect_color(image_path):
         main_color = "white"
 
     return main_color
+
+
+# 云同步到服务器端
+import subprocess
+def run_rclone(command):
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding='utf-8',
+            errors='replace',
+            text=True
+        )
+        print("Output:", result.stdout)
+    except subprocess.CalledProcessError as e:
+        print("Error:", e.stderr)
+# 运行时执行 run_rclone(["rclone", "copy", picture_path, myvm_path, "--progress"])
 
 
 # PyQT界面参数配置
