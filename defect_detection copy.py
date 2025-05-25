@@ -5,6 +5,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont
 import sys
 import os
+import numpy as np
 
 # 尝试导入serial模块，如果不存在则设置标志
 _has_serial = True
@@ -13,29 +14,452 @@ try:
 except ImportError:
     _has_serial = False
 
-# 参数配置
-camera_ids = 2 # 总摄像头数量
-camera_id = 0 # 当前摄像头编号
-camera_width = 1024 # 视频宽度
-camera_height = 576 # 视频高度
-conf_thres = 0.5 # 置信度阈值
-iou_thres = 0.5 # 交叉比阈值
-scrath_detection = True # 划痕检测
-dents = True # 凹坑检测
+# 缺陷检测detect.py
+import time
+from pathlib import Path
+import csv
+import os
+import cv2
+import torch
+import torch.backends.cudnn as cudnn
+from numpy import random
+from models.experimental import attempt_load
+from utils.datasets import LoadImages
+from utils.general import check_img_size, non_max_suppression, scale_coords, xyxy2xywh, set_logging
+from utils.torch_utils import select_device, time_synchronized
+from utils.plots import plot_one_box
+# 凹坑检测代码
+def dent_detect(weights='weights/aoxian&huahen.pt', source='data/val', img_size=640, conf_thres=0.25,
+                iou_thres=0.45, device='', classes=1, agnostic_nms=False, augment=False,
+                csv_path=None):
+    # 初始化
+    set_logging()
+    device = select_device(device)
+    half = device.type != 'cpu'  # 只在CUDA上支持半精度
 
-# 参数配置
+    # 创建保存检测结果的文件夹，使用递推方式
+    save_dir = Path('runs')
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 递推查找car文件夹
+    exp_num = 0
+    for f in save_dir.glob('car*'):
+        if f.is_dir():
+            try:
+                # 提取文件夹名中的数字
+                num = int(f.name.replace('car', ''))
+                exp_num = max(exp_num, num + 1)
+            except ValueError:
+                pass
+
+    # 创建新的输出文件夹
+    exp_name = f'car{exp_num}'  # 第一个文件夹为car0，然后依次为car1、car2等
+    save_dir = save_dir / exp_name
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 设置CSV文件路径
+    if csv_path is None:
+        csv_path = save_dir / 'dent_detection_results.csv'
+    else:
+        # 如果提供了csv_path，但只是文件名而不是完整路径，则放在新建的文件夹中
+        if os.path.dirname(csv_path) == '':
+            csv_path = save_dir / csv_path
+
+    # 加载模型
+    model = attempt_load(weights, map_location=device)  # 加载FP32模型
+    stride = int(model.stride.max())  # 模型步长
+    img_size = check_img_size(img_size, s=stride)  # 检查图像尺寸
+
+    if half:
+        model.half()  # 转为FP16
+
+    # 设置数据加载器（仅图片）
+    dataset = LoadImages(source, img_size=img_size, stride=stride)
+
+    # 获取类名
+    names = model.module.names if hasattr(model, 'module') else model.names
+
+    # 准备CSV文件
+    csv_file = open(csv_path, 'w', newline='')
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(['image', 'defect_id', 'class', 'confidence', 'x_min', 'y_min', 'x_max', 'y_max'])
+
+    # 全局变量，用于统计缺陷编号
+    dent_counter = 0
+
+    # 运行推理
+    t0 = time.time()
+    for path, img, im0s, _ in dataset:
+        img = torch.from_numpy(img).to(device)
+        img = img.half() if half else img.float()  # uint8 to fp16/32
+        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        if img.ndimension() == 3:
+            img = img.unsqueeze(0)
+
+        # 推理
+        t1 = time_synchronized()
+        with torch.no_grad():
+            pred = model(img, augment=augment)[0]
+        t2 = time_synchronized()
+
+        # 应用NMS
+        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes, agnostic=agnostic_nms)
+        t3 = time_synchronized()
+
+        # 处理检测结果
+        for i, det in enumerate(pred):  # 每张图片的检测结果
+            p, im0 = path, im0s
+
+            # 获取图片名称
+            img_name = Path(p).name
+
+            if len(det):
+                # 将边界框从img_size调整到im0大小
+                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+
+                # 写入CSV并绘制边界框
+                for *xyxy, conf, cls in reversed(det):
+                    # 增加缺陷编号
+                    dent_counter += 1
+
+                    # 转换为整数以便于写入CSV
+                    x_min, y_min, x_max, y_max = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+                    class_name = names[int(cls)]
+                    confidence = float(conf)
+
+                    # 写入CSV
+                    csv_writer.writerow([img_name, dent_counter, class_name, confidence, x_min, y_min, x_max, y_max])
+
+                    # 在图片上绘制边界框，标签中包含缺陷编号
+                    label = f'#{dent_counter} {class_name} {confidence:.2f}'
+                    plot_one_box(xyxy, im0, label=label, color=(0, 0, 255), line_thickness=2)
+
+            # 保存检测后的图片
+            save_path = save_dir / img_name
+            cv2.imwrite(str(save_path), im0)
+
+    # 关闭CSV文件
+    csv_file.close()
+    return dent_counter
+# 划痕检测代码
+def scratch_detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf_thres=0.25,
+                   iou_thres=0.45, device='', classes=0, agnostic_nms=False, augment=False,
+                   csv_path=None):
+    # 初始化
+    set_logging()
+    device = select_device(device)
+    half = device.type != 'cpu'  # 只在CUDA上支持半精度
+
+    # 创建保存检测结果的文件夹，使用递推方式
+    save_dir = Path('runs')
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 递推查找car文件夹
+    exp_num = 0
+    for f in save_dir.glob('car*'):
+        if f.is_dir():
+            try:
+                # 提取文件夹名中的数字
+                num = int(f.name.replace('car', ''))
+                exp_num = max(exp_num, num + 1)
+            except ValueError:
+                pass
+
+    # 创建新的输出文件夹
+    exp_name = f'car{exp_num}'  # 第一个文件夹为car0，然后依次为car1、car2等
+    save_dir = save_dir / exp_name
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 设置CSV文件路径
+    if csv_path is None:
+        csv_path = save_dir / 'scratch_detection_results.csv'
+    else:
+        # 如果提供了csv_path，但只是文件名而不是完整路径，则放在新建的文件夹中
+        if os.path.dirname(csv_path) == '':
+            csv_path = save_dir / csv_path
+
+    # 加载模型
+    model = attempt_load(weights, map_location=device)  # 加载FP32模型
+    stride = int(model.stride.max())  # 模型步长
+    img_size = check_img_size(img_size, s=stride)  # 检查图像尺寸
+
+    if half:
+        model.half()  # 转为FP16
+
+    # 设置数据加载器（仅图片）
+    dataset = LoadImages(source, img_size=img_size, stride=stride)
+
+    # 获取类名
+    names = model.module.names if hasattr(model, 'module') else model.names
+
+    # 准备CSV文件
+    csv_file = open(csv_path, 'w', newline='')
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(['image', 'defect_id', 'class', 'confidence', 'x_min', 'y_min', 'x_max', 'y_max'])
+
+    # 全局变量，用于统计缺陷编号
+    scratch_counter = 0
+
+    # 运行推理
+    t0 = time.time()
+    for path, img, im0s, _ in dataset:
+        img = torch.from_numpy(img).to(device)
+        img = img.half() if half else img.float()  # uint8 to fp16/32
+        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        if img.ndimension() == 3:
+            img = img.unsqueeze(0)
+
+        # 推理
+        t1 = time_synchronized()
+        with torch.no_grad():
+            pred = model(img, augment=augment)[0]
+        t2 = time_synchronized()
+
+        # 应用NMS
+        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes, agnostic=agnostic_nms)
+        t3 = time_synchronized()
+
+        # 处理检测结果
+        for i, det in enumerate(pred):  # 每张图片的检测结果
+            p, im0 = path, im0s
+
+            # 获取图片名称
+            img_name = Path(p).name
+
+            if len(det):
+                # 将边界框从img_size调整到im0大小
+                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+
+                # 写入CSV并绘制边界框
+                for *xyxy, conf, cls in reversed(det):
+                    # 增加缺陷编号
+                    scratch_counter += 1
+
+                    # 转换为整数以便于写入CSV
+                    x_min, y_min, x_max, y_max = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+                    class_name = names[int(cls)]
+                    confidence = float(conf)
+
+                    # 写入CSV
+                    csv_writer.writerow([img_name, scratch_counter, class_name, confidence, x_min, y_min, x_max, y_max])
+
+                    # 在图片上绘制边界框，标签中包含缺陷编号
+                    label = f'#{scratch_counter} {class_name} {confidence:.2f}'
+                    plot_one_box(xyxy, im0, label=label, color=(0, 0, 255), line_thickness=2)
+
+            # 保存检测后的图片
+            save_path = save_dir / img_name
+            cv2.imwrite(str(save_path), im0)
+
+    # 关闭CSV文件
+    csv_file.close()
+    return scratch_counter
+# 均可检测代码
+def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf_thres=0.25,
+           iou_thres=0.45, device='', classes=None, agnostic_nms=False, augment=False,
+           csv_path=None):
+    # 初始化
+    set_logging()
+    device = select_device(device)
+    half = device.type != 'cpu'  # 只在CUDA上支持半精度
+
+    # 创建保存检测结果的文件夹，使用递推方式
+    save_dir = Path('runs')
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 递推查找car文件夹
+    exp_num = 0
+    for f in save_dir.glob('car*'):
+        if f.is_dir():
+            try:
+                # 提取文件夹名中的数字
+                num = int(f.name.replace('car', ''))
+                exp_num = max(exp_num, num + 1)
+            except ValueError:
+                pass
+
+    # 创建新的输出文件夹
+    exp_name = f'car{exp_num}'  # 第一个文件夹为car0，然后依次为car1、car2等
+    save_dir = save_dir / exp_name
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 设置CSV文件路径
+    if csv_path is None:
+        csv_path = save_dir / 'detection_results.csv'
+    else:
+        # 如果提供了csv_path，但只是文件名而不是完整路径，则放在新建的文件夹中
+        if os.path.dirname(csv_path) == '':
+            csv_path = save_dir / csv_path
+
+    # 加载模型
+    model = attempt_load(weights, map_location=device)  # 加载FP32模型
+    stride = int(model.stride.max())  # 模型步长
+    img_size = check_img_size(img_size, s=stride)  # 检查图像尺寸
+
+    if half:
+        model.half()  # 转为FP16
+
+    # 设置数据加载器（仅图片）
+    dataset = LoadImages(source, img_size=img_size, stride=stride)
+
+    # 获取类名
+    names = model.module.names if hasattr(model, 'module') else model.names
+
+    # 准备CSV文件
+    csv_file = open(csv_path, 'w', newline='')
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(['image', 'defect_id', 'class', 'confidence', 'x_min', 'y_min', 'x_max', 'y_max'])
+
+    # 全局变量，用于统计缺陷编号
+    detect_counter = 0
+
+    # 运行推理
+    t0 = time.time()
+    for path, img, im0s, _ in dataset:
+        img = torch.from_numpy(img).to(device)
+        img = img.half() if half else img.float()  # uint8 to fp16/32
+        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        if img.ndimension() == 3:
+            img = img.unsqueeze(0)
+
+        # 推理
+        t1 = time_synchronized()
+        with torch.no_grad():
+            pred = model(img, augment=augment)[0]
+        t2 = time_synchronized()
+
+        # 应用NMS
+        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=classes, agnostic=agnostic_nms)
+        t3 = time_synchronized()
+
+        # 处理检测结果
+        for i, det in enumerate(pred):  # 每张图片的检测结果
+            p, im0 = path, im0s
+
+            # 获取图片名称
+            img_name = Path(p).name
+
+            if len(det):
+                # 将边界框从img_size调整到im0大小
+                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+
+                # 写入CSV并绘制边界框
+                for *xyxy, conf, cls in reversed(det):
+                    # 增加缺陷编号
+                    detect_counter += 1
+
+                    # 转换为整数以便于写入CSV
+                    x_min, y_min, x_max, y_max = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+                    class_name = names[int(cls)]
+                    confidence = float(conf)
+
+                    # 写入CSV
+                    csv_writer.writerow([img_name, detect_counter, class_name, confidence, x_min, y_min, x_max, y_max])
+
+                    # 在图片上绘制边界框，标签中包含缺陷编号
+                    label = f'#{detect_counter} {class_name} {confidence:.2f}'
+                    plot_one_box(xyxy, im0, label=label, color=(0, 0, 255), line_thickness=2)
+
+            # 保存检测后的图片
+            save_path = save_dir / img_name
+            cv2.imwrite(str(save_path), im0)
+
+    # 关闭CSV文件
+    csv_file.close()
+    return detect_counter
+
+
+# 颜色识别代码color_detection
+def detect_color(image_path):
+    image = cv2.imread(image_path)
+
+    image0 = cv2.resize(image, (600, 600))
+    image = image0[200:400, 200:400]
+
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    color_ranges = {
+        "red0": [(0, 50, 50), (10, 255, 255)],
+        "red1": [(160, 50, 50), (180, 255, 255)],
+        "blue": [(95, 50, 50), (130, 255, 255)],
+        "green": [(35, 50, 50), (85, 255, 255)],
+        "yellow": [(25, 50, 50), (35, 255, 255)],
+        "white0": [(0, 0, 200), (180, 50, 255)],
+        "black": [(0, 0, 0), (180, 255, 50)],
+        "purple": [(130, 50, 50), (155, 255, 255)],
+        "pink": [(150, 50, 50), (170, 255, 255)],
+        "orange": [(10, 50, 50), (25, 255, 255)],
+        "white1": [(0, 0, 50), (180, 50, 255)],
+        "cyan": [(85, 50, 50), (90, 255, 255)],
+    }
+
+    # 初始化颜色占比
+    color_percentage = {}
+
+    # 遍历颜色范围
+    for color, (lower, upper) in color_ranges.items():
+        lower = np.array(lower, dtype=np.uint8)
+        upper = np.array(upper, dtype=np.uint8)
+
+        # 创建掩码
+        mask = cv2.inRange(hsv_image, lower, upper)
+
+        # 计算颜色像素占比
+        percentage = (cv2.countNonZero(mask) / (image.shape[0] * image.shape[1])) * 100
+        color_percentage[color] = percentage
+
+    # 找出占比最高的颜色
+    main_color = max(color_percentage, key=color_percentage.get)
+
+    # 合并相同颜色的不同色域
+    if main_color == "red0" or main_color == "red1":
+        main_color = "red"
+    elif main_color == "white0" or main_color == "white1":
+        main_color = "white"
+
+    return main_color
+
+
+# 云同步到服务器端
+import subprocess
+def run_rclone(command):
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding='utf-8',
+            errors='replace',
+            text=True
+        )
+        print("Output:", result.stdout)
+    except subprocess.CalledProcessError as e:
+        print("Error:", e.stderr)
+# 运行时执行 run_rclone(["rclone", "copy", picture_path, myvm_path, "--progress"])
+
+
+# PyQT界面参数配置
 class DefectDetectionApp(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # 初始化摄像头参数
-        self.camera_id = 0  # 当前摄像头编号
+        # 初始化参数
+        self.camera_ids = 2 # 总摄像头数量
+        self.Nowcamera_id = 0 # 当前摄像头编号
+        self.camera_id = 0  # 摄像头编号
         self.camera_width = 1024  # 视频宽度
         self.camera_height = 576  # 视频高度
         self.conf_thres = 0.5  # 置信度阈值
         self.iou_thres = 0.5  # 交叉比阈值
+        self.Leftcarbody_camera_id = 0 # 左侧车身摄像头编号
+        self.Rightcarbody_camera_id = 1 # 右侧车身摄像头编号
+        self.Roofcarbody_camera_id = 2 # 车顶车身摄像头编号
         self.scratch_detection = True  # 划痕检测
         self.dents_detection = True  # 凹坑检测
+        self.dents_picture = True # 凹坑是否查看
+        self.scratch_picture = True # 划痕是否查看
+        self.file_path = "weights/aoxian&huahen.pt"
 
         # 初始化摄像头和媒体播放器
         self.camera = None
@@ -44,14 +468,14 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.setupUi()
 
     def closeEvent(self, event):
-        """Handle application close event"""
+        """处理应用程序关闭事件"""
         # 关闭摄像头
         if self.camera is not None and self.camera.isActive():
             self.camera.stop()
         event.accept()
 
     def setVideoWidgetBlack(self):
-        """Set the video widget background to black"""
+        """将视频窗口背景设置为黑色"""
         # 创建一个黑色背景的样式表
         self.videoWidget.setStyleSheet("background-color: black;")
 
@@ -274,21 +698,38 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.pushButton_16.setIconSize(QtCore.QSize(130, 130))
         self.pushButton_16.setObjectName("pushButton_16")
         self.label_8 = QtWidgets.QLabel(parent=self.tab_4)
-        self.label_8.setGeometry(QtCore.QRect(10, 10, 320, 180))
+        self.label_8.setGeometry(QtCore.QRect(20, 50, 320, 180))
         self.label_8.setAutoFillBackground(True)
         self.label_8.setObjectName("label_8")
         self.label_9 = QtWidgets.QLabel(parent=self.tab_4)
-        self.label_9.setGeometry(QtCore.QRect(370, 10, 320, 180))
+        self.label_9.setGeometry(QtCore.QRect(380, 50, 320, 180))
         self.label_9.setAutoFillBackground(True)
         self.label_9.setObjectName("label_9")
         self.label_10 = QtWidgets.QLabel(parent=self.tab_4)
-        self.label_10.setGeometry(QtCore.QRect(10, 220, 320, 180))
+        self.label_10.setGeometry(QtCore.QRect(20, 260, 320, 180))
         self.label_10.setAutoFillBackground(True)
         self.label_10.setObjectName("label_10")
         self.label_11 = QtWidgets.QLabel(parent=self.tab_4)
-        self.label_11.setGeometry(QtCore.QRect(370, 220, 320, 180))
+        self.label_11.setGeometry(QtCore.QRect(380, 260, 320, 180))
         self.label_11.setAutoFillBackground(True)
         self.label_11.setObjectName("label_11")
+        self.label_16 = QtWidgets.QLabel(parent=self.tab_4)
+        self.label_16.setGeometry(QtCore.QRect(30, 20, 91, 16))
+        font = QtGui.QFont()
+        font.setPointSize(10)
+        self.label_16.setFont(font)
+        self.label_16.setObjectName("label_16")
+        self.comboBox_8 = QtWidgets.QComboBox(parent=self.tab_4)
+        self.comboBox_8.setGeometry(QtCore.QRect(120, 19, 31, 22))
+        self.comboBox_8.setObjectName("comboBox_8")
+        self.comboBox_8.addItem("")
+        self.comboBox_8.addItem("")
+        self.comboBox_8.addItem("")
+        self.comboBox_8.addItem("")
+        self.comboBox_8.addItem("")
+        self.pushButton_19 = QtWidgets.QPushButton(parent=self.tab_4)
+        self.pushButton_19.setGeometry(QtCore.QRect(190, 20, 81, 21))
+        self.pushButton_19.setObjectName("pushButton_19")
         self.textBrowser_2 = QtWidgets.QTextBrowser(parent=self.tab_4)
         self.textBrowser_2.setGeometry(QtCore.QRect(730, 450, 400, 200))
         self.textBrowser_2.setObjectName("textBrowser_2")
@@ -414,6 +855,13 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.label_9.setText(_translate("MainWindow", "picture2"))
         self.label_10.setText(_translate("MainWindow", "picture3"))
         self.label_11.setText(_translate("MainWindow", "picture4"))
+        self.label_16.setText(_translate("MainWindow", "摄像头编号为"))
+        self.comboBox_8.setItemText(0, _translate("MainWindow", "0"))
+        self.comboBox_8.setItemText(1, _translate("MainWindow", "1"))
+        self.comboBox_8.setItemText(2, _translate("MainWindow", "2"))
+        self.comboBox_8.setItemText(3, _translate("MainWindow", "3"))
+        self.comboBox_8.setItemText(4, _translate("MainWindow", "4"))
+        self.pushButton_19.setText(_translate("MainWindow", "查看"))
         self.checkBox_5.setText(_translate("MainWindow", "查看凹坑"))
         self.checkBox_6.setText(_translate("MainWindow", "查看划痕"))
         self.checkBox_7.setText(_translate("MainWindow", "所有"))
@@ -428,21 +876,24 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_5), _translate("MainWindow", "历史记录"))
 
     def connectSignalsSlots(self):
-        """Connect signals to their respective slots"""
+        """连接信号和槽"""
         # 连接信号和槽
-        # Camera and detection controls
+        # 摄像头和检测控制
+        self.pushButton.clicked.connect(self.viewLeftcarbody)
+        self.pushButton_2.clicked.connect(self.viewRightcarbody)
+        self.pushButton_3.clicked.connect(self.viewRoofcarbody)
         self.pushButton_6.clicked.connect(self.openCamera)
         self.pushButton_13.clicked.connect(self.startDetection)
         self.pushButton_14.clicked.connect(self.stopDetection)
         self.pushButton_15.clicked.connect(self.close)
         self.pushButton_18.clicked.connect(self.selectWeightFile)
 
-        # Communication and service testing
+        # 通信和服务测试
         self.pushButton_4.clicked.connect(self.testCommunication)
         self.pushButton_5.clicked.connect(self.testCloudService)
         self.pushButton_7.clicked.connect(self.refreshPorts)
 
-        # History search
+        # 历史记录搜索
         self.pushButton_17.clicked.connect(self.searchHistory)
 
         # 摄像头选择下拉框
@@ -453,6 +904,12 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.doubleSpinBox_2.setValue(self.iou_thres)
         self.checkBox.setChecked(self.scratch_detection)
         self.checkBox_2.setChecked(self.dents_detection)
+        self.checkBox_5.setChecked(self.dents_picture)
+        self.checkBox_6.setChecked(self.scratch_picture)
+        if self.dents_picture and self.scratch_picture:
+            self.checkBox_7.setChecked(True)
+
+        # 查看结果
 
         # 设置日期控件默认值
         current_date = QtCore.QDate.currentDate()
@@ -466,77 +923,107 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.setVideoWidgetBlack()
 
     # 各种功能方法
+    def viewLeftcarbody(self):
+        """查看车身左侧"""
+        self.textBrowser.append("查看车身左侧")
+        # 调用opencurrentCamera打开左侧摄像头
+        self.opencurrentCamera(self.Leftcarbody_camera_id)
+
+    def viewRightcarbody(self):
+        """查看车身右侧"""
+        self.textBrowser.append("查看车身右侧")
+        # 调用opencurrentCamera打开右侧摄像头
+        self.opencurrentCamera(self.Rightcarbody_camera_id)
+
+    def viewRoofcarbody(self):
+        """查看车身顶部"""
+        self.textBrowser.append("查看车身顶部")
+        # 调用opencurrentCamera打开顶部摄像头
+        self.opencurrentCamera(self.Roofcarbody_camera_id)
+
+    def opencurrentCamera(self, Nowcamera_id):
+        """根据指定的摄像头ID打开摄像头"""
+        # 如果当前摄像头已经打开，先关闭
+        if self.camera is not None and self.camera.isActive():
+            # 使用closeCamera函数关闭当前摄像头，但不改变按钮文本
+            self.camera.stop()
+            self.camera = None
+            # 注意这里不调用setVideoWidgetBlack()，因为我们将立即打开新的摄像头
+
+        # 获取可用摄像头列表
+        available_cameras = QMediaDevices.videoInputs()
+
+        if not available_cameras:
+            self.textBrowser.append("未找到可用摄像头")
+            return
+
+        # 确保摄像头ID在有效范围内
+        if Nowcamera_id >= len(available_cameras):
+            self.textBrowser.append(f"摄像头ID {Nowcamera_id} 超出范围，请重新选择")
+            # Nowcamera_id = 0
+            return
+
+        # 更新当前摄像头ID
+        self.camera_id = Nowcamera_id
+
+        # 确保视频窗口可见并清除黑色背景
+        self.videoWidget.show()
+        self.videoWidget.setStyleSheet("")
+
+        # 创建摄像头对象
+        self.camera = QCamera(available_cameras[Nowcamera_id])
+
+        # 设置摄像头到媒体捕获会话
+        self.capture_session.setCamera(self.camera)
+
+        # 启动摄像头
+        self.camera.start()
+        self.pushButton_6.setText("关闭摄像头")
+        self.textBrowser.append(f"已打开摄像头 {Nowcamera_id}")
+
+        # 更新下拉框选中项
+        self.comboBox.setCurrentIndex(Nowcamera_id)
+
     def openCamera(self):
-        """Open the camera"""
+        """打开或关闭摄像头"""
+        # 检查摄像头是否已经打开
+        if self.camera is not None and self.camera.isActive():
+            # 如果摄像头已经打开，则关闭摄像头
+            self.closeCamera()
+        else:
+            # 如果摄像头未打开，则打开摄像头
+            self.opencurrentCamera(self.camera_id)
+
+    def closeCamera(self):
+        """关闭摄像头并将界面变为黑色"""
         if self.camera is not None and self.camera.isActive():
             # 关闭摄像头
             self.camera.stop()
             self.camera = None
+
+            # 将按钮文本改回“打开摄像头”
             self.pushButton_6.setText("打开摄像头")
             self.textBrowser.append("已关闭摄像头")
 
             # 将视频显示区域变为黑色
             self.setVideoWidgetBlack()
-        else:
-            # 获取可用摄像头列表
-            available_cameras = QMediaDevices.videoInputs()
-
-            if not available_cameras:
-                self.textBrowser.append("未找到可用摄像头")
-                return
-
-            # 确保摄像头ID在有效范围内
-            if self.camera_id >= len(available_cameras):
-                self.camera_id = 0
-
-            # 确保视频窗口可见并清除黑色背景
-            self.videoWidget.show()
-            self.videoWidget.setStyleSheet("")
-
-            # 创建摄像头对象
-            self.camera = QCamera(available_cameras[self.camera_id])
-
-            # 设置摄像头到媒体捕获会话
-            self.capture_session.setCamera(self.camera)
-
-            # 启动摄像头
-            self.camera.start()
-            self.pushButton_6.setText("关闭摄像头")
-            self.textBrowser.append(f"已打开摄像头 {self.camera_id}")
 
     def changeCamera(self, index):
-        """Change the camera based on comboBox selection"""
-        # 获取新的摄像头ID (索引从0开始)
-        new_camera_id = index
-
-        # 更新摄像头ID
-        self.camera_id = new_camera_id
-        self.textBrowser.append(f"已切换到摄像头 {self.camera_id}")
-
-        # 如果摄像头已经打开，则重新打开新的摄像头
-        if self.camera is not None and self.camera.isActive():
-            # 关闭当前摄像头
-            self.camera.stop()
-            self.camera = None
-
-            # 确保视频窗口可见
-            self.videoWidget.show()
-            # 切换摄像头时不需要清除背景，因为会重新打开摄像头
-
-            # 重新打开新摄像头
-            self.openCamera()
+        """根据下拉框选择切换摄像头"""
+        # 直接调用opencurrentCamera打开指定编号的摄像头
+        self.opencurrentCamera(index)
 
     def startDetection(self):
-        """Start the defect detection process"""
+        """开始缺陷检测过程"""
         # 更新检测参数
         self.conf_thres = self.doubleSpinBox.value()
         self.iou_thres = self.doubleSpinBox_2.value()
         self.scratch_detection = self.checkBox.isChecked()
         self.dents_detection = self.checkBox_2.isChecked()
 
-        # 检查摄像头是否打开
-        if self.camera is None or not self.camera.isActive():
-            self.textBrowser.append("请先打开摄像头")
+        # 检查是否至少启用了一种检测类型
+        if not self.scratch_detection and not self.dents_detection:
+            self.textBrowser.append("错误: 请至少启用一种检测类型（划痕或凹坑）")
             return
 
         self.textBrowser.append("开始检测...")
@@ -546,30 +1033,32 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.textBrowser.append(f"凹坑检测: {'开启' if self.dents_detection else '关闭'}")
 
     def stopDetection(self):
-        """Stop the defect detection process"""
+        """停止缺陷检测过程"""
         self.textBrowser.append("停止检测")
+        print(self.camera_id)
+        print(self.conf_thres)
+        print(self.iou_thres)
 
     def selectWeightFile(self):
-        """Select weight file for the detection model"""
+        """选择检测模型的权重文件"""
         file_dialog = QtWidgets.QFileDialog()
         file_path, _ = file_dialog.getOpenFileName(self, "选择权重文件", "", "Weight Files (*.pt *.pth);;All Files (*)")
         if file_path:
             self.textBrowser.append(f"已选择权重文件: {file_path}")
+        self.file_path = file_path
 
     def testCommunication(self):
-        """Test communication with external devices"""
+        """测试与外部设备的通信"""
         self.textBrowser.append("正在测试通信...")
         # 模拟通信测试
         QtCore.QTimer.singleShot(1000, lambda: self.textBrowser.append("通信测试成功"))
 
     def testCloudService(self):
-        """Test connection to cloud services"""
-        self.textBrowser.append("正在测试云服务连接...")
-        # 模拟云服务测试
-        QtCore.QTimer.singleShot(1500, lambda: self.textBrowser.append("云服务连接测试成功"))
+        """测试云服务连接"""
+
 
     def update_port_list(self):
-        """Update the list of available serial ports"""
+        """更新可用串口列表"""
         self.textBrowser.append("正在获取串口列表...")
 
         # 获取系统中的所有串口
@@ -620,7 +1109,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         return ports
 
     def refreshPorts(self):
-        """Refresh available serial ports"""
+        """刷新可用串口"""
         # 更新串口列表
         self.update_port_list()
 
@@ -629,8 +1118,8 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.comboBox_3.clear()
         for rate in baud_rates:
             self.comboBox_3.addItem(rate)
-        # 默认选择115200
-        self.comboBox_3.setCurrentText("115200")
+        # 默认选择9600
+        self.comboBox_3.setCurrentText("9600")
 
         # 添加数据位选项
         data_bits = ["5", "6", "7", "8"]
@@ -657,7 +1146,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.comboBox_7.setCurrentText("1")
 
     def searchHistory(self):
-        """Search historical detection records"""
+        """搜索历史检测记录"""
         start_date = self.dateEdit_3.date().toString("yyyy-MM-dd")
         end_date = self.dateEdit.date().toString("yyyy-MM-dd")
         defect_type = self.comboBox_6.currentText()
@@ -669,8 +1158,22 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 模拟搜索结果
         QtCore.QTimer.singleShot(1000, lambda: self.textBrowser.append("搜索完成，找到3条记录"))
 
+    def updateDetectionSettings(self):
+        """更新检测设置（划痕/凹坑检测）"""
+        # 获取复选框状态
+        self.scratch_detection = self.checkBox.isChecked()
+        self.dents_detection = self.checkBox_2.isChecked()
 
-# Main entry point
+        # 在文本浏览器中显示当前设置
+        self.textBrowser.append("检测设置已更新:")
+        self.textBrowser.append(f"划痕检测: {'开启' if self.scratch_detection else '关闭'}")
+        self.textBrowser.append(f"凹坑检测: {'开启' if self.dents_detection else '关闭'}")
+
+        # 如果两种检测都关闭，显示警告
+        if not self.scratch_detection and not self.dents_detection:
+            self.textBrowser.append("警告: 所有检测类型已关闭，将无法进行缺陷检测！")
+
+
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     window = DefectDetectionApp()
