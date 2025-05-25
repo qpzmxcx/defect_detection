@@ -901,7 +901,17 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
         # 设置默认值
         self.doubleSpinBox.setValue(self.conf_thres)
+        self.doubleSpinBox.setMinimum(0.0)
+        self.doubleSpinBox.setMaximum(1.0)
+        self.doubleSpinBox.setSingleStep(0.01)
+        self.doubleSpinBox.setDecimals(2)
+        self.doubleSpinBox.valueChanged.connect(self.change_confidence)
         self.doubleSpinBox_2.setValue(self.iou_thres)
+        self.doubleSpinBox_2.setMinimum(0.0)
+        self.doubleSpinBox_2.setMaximum(1.0)
+        self.doubleSpinBox_2.setSingleStep(0.01)
+        self.doubleSpinBox_2.setDecimals(2)
+        self.doubleSpinBox_2.valueChanged.connect(self.change_iou)
         self.checkBox.setChecked(self.scratch_detection)
         self.checkBox_2.setChecked(self.dents_detection)
         self.checkBox_5.setChecked(self.dents_picture)
@@ -1055,7 +1065,8 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
     def testCloudService(self):
         """测试云服务连接"""
-
+        print(self.conf_thres)
+        print(self.iou_thres)
 
     def update_port_list(self):
         """更新可用串口列表"""
@@ -1172,6 +1183,20 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 如果两种检测都关闭，显示警告
         if not self.scratch_detection and not self.dents_detection:
             self.textBrowser.append("警告: 所有检测类型已关闭，将无法进行缺陷检测！")
+
+    def change_confidence(self):
+        global conf_thres
+        conf_thres = self.doubleSpinBox.value()
+        self.conf_thres = conf_thres
+        # 显示两位小数
+        self.textBrowser.append(f"当前置信度为：{conf_thres:.2f}")
+
+    def change_iou(self):
+        global iou_thres
+        iou_thres = self.doubleSpinBox_2.value()
+        self.iou_thres = iou_thres
+        # 显示两位小数
+        self.textBrowser.append(f"当前交叉比为：{iou_thres:.2f}")
 
 
 if __name__ == "__main__":
