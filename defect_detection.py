@@ -5,7 +5,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont
 import sys
 import os
-import numpy
+import numpy as np
 
 # 尝试导入serial模块，如果不存在则设置标志
 _has_serial = True
@@ -19,18 +19,15 @@ import time
 from pathlib import Path
 import csv
 import os
-
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from numpy import random
-
 from models.experimental import attempt_load
 from utils.datasets import LoadImages
 from utils.general import check_img_size, non_max_suppression, scale_coords, xyxy2xywh, set_logging
 from utils.torch_utils import select_device, time_synchronized
 from utils.plots import plot_one_box
-
 
 # 凹坑检测代码
 def dent_detect(weights='weights/aoxian&huahen.pt', source='data/val', img_size=640, conf_thres=0.25,
@@ -146,7 +143,6 @@ def dent_detect(weights='weights/aoxian&huahen.pt', source='data/val', img_size=
     csv_file.close()
     return dent_counter
 
-
 # 划痕检测代码
 def scratch_detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf_thres=0.25,
                    iou_thres=0.45, device='', classes=0, agnostic_nms=False, augment=False,
@@ -260,7 +256,6 @@ def scratch_detect(weights='weights/aoxian&huahen.pt', source='data', img_size=6
     # 关闭CSV文件
     csv_file.close()
     return scratch_counter
-
 
 # 均可检测代码
 def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf_thres=0.25,
@@ -376,6 +371,7 @@ def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf
     csv_file.close()
     return detect_counter
 
+
 #颜色识别代码color_detection
 def detect_color(image_path):
     image = cv2.imread(image_path)
@@ -426,7 +422,8 @@ def detect_color(image_path):
 
     return main_color
 
-# 参数配置
+
+# PyQT界面参数配置
 class DefectDetectionApp(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -447,7 +444,6 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.dents_picture = True # 凹坑是否查看
         self.scratch_picture = True # 划痕是否查看
         self.file_path = "weights/aoxian&huahen.pt"
-
 
         # 初始化摄像头和媒体播放器
         self.camera = None
@@ -899,7 +895,6 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
         # 查看结果
 
-
         # 设置日期控件默认值
         current_date = QtCore.QDate.currentDate()
         self.dateEdit.setDate(current_date)
@@ -1034,6 +1029,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         file_path, _ = file_dialog.getOpenFileName(self, "选择权重文件", "", "Weight Files (*.pt *.pth);;All Files (*)")
         if file_path:
             self.textBrowser.append(f"已选择权重文件: {file_path}")
+        self.file_path = file_path
 
     def testCommunication(self):
         """测试与外部设备的通信"""
@@ -1043,9 +1039,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
     def testCloudService(self):
         """测试云服务连接"""
-        self.textBrowser.append("正在测试云服务连接...")
-        # 模拟云服务测试
-        QtCore.QTimer.singleShot(1500, lambda: self.textBrowser.append("云服务连接测试成功"))
+
 
     def update_port_list(self):
         """更新可用串口列表"""
