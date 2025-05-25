@@ -1,0 +1,4 @@
+image,defect_id,class,confidence,x_min,y_min,x_max,y_max
+2.jpg,1,hauhen,0.9736328125,446,897,974,985
+frame_1.jpg,2,hauhen,0.327392578125,134,0,1432,330
+frame_1.jpg,3,hauhen,0.55322265625,1051,558,1433,648

@@ -1,0 +1,34 @@
+# 忽略 weights 文件夹
+weights/
+
+# JetBrains IDE 配置文件夹
+.idea/
+
+# Python 缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 环境配置文件
+env/
+venv/
+ENV/
+.venv/
+
+# 日志文件
+*.log
+
+# 操作系统生成文件
+.DS_Store
+Thumbs.db
+
+# VSCode 配置文件夹
+.vscode/
+
+# 临时文件
+*.tmp
+*.temp
+
+# 其他可能的忽略文件
+*.swp
+*.swo
