@@ -896,7 +896,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 通信和服务测试
         self.pushButton_4.clicked.connect(self.testCommunication)
         self.pushButton_5.clicked.connect(self.testCloudService)
-        self.pushButton_7.clicked.connect(self.refreshPorts)
+        self.pushButton_7.clicked.connect(self.update_port_list)
 
         # 历史记录搜索
         self.pushButton_17.clicked.connect(self.searchHistory)
@@ -1199,7 +1199,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
                 for rate in baud_rates:
                     self.comboBox_3.addItem(rate)
                 # 默认选择115200
-                self.comboBox_3.setCurrentText("115200")
+                self.comboBox_3.setCurrentText("9600")
             except Exception as e:
                 print(f"设置波特率选项时出错: {e}")
 
