@@ -460,6 +460,11 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.dents_picture = True # 凹坑是否查看
         self.scratch_picture = True # 划痕是否查看
         self.file_path = "weights/aoxian&huahen.pt"
+        self.port = "COM3"
+        self.baud_rate = 9600
+        self.data_bits = 8
+        self.parity = "N"
+        self.stop_bits = 1
 
         # 初始化摄像头和媒体播放器
         self.camera = None
@@ -899,6 +904,13 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 摄像头选择下拉框
         self.comboBox.currentIndexChanged.connect(self.changeCamera)
 
+        # 串口选择下拉框
+        self.comboBox_2.currentIndexChanged.connect(self.choose_port_list)
+        self.comboBox_3.currentIndexChanged.connect(self.choose_baud_rate)
+        self.comboBox_4.currentIndexChanged.connect(self.choose_data_bits)
+        self.comboBox_5.currentIndexChanged.connect(self.choose_parity)
+        self.comboBox_6.currentIndexChanged.connect(self.choose_stop_bits)
+
         # 设置默认值
         self.doubleSpinBox.setValue(self.conf_thres)
         self.doubleSpinBox.setMinimum(0.0)
@@ -918,8 +930,6 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.checkBox_6.setChecked(self.scratch_picture)
         if self.dents_picture and self.scratch_picture:
             self.checkBox_7.setChecked(True)
-
-        # 查看结果
 
         # 设置日期控件默认值
         current_date = QtCore.QDate.currentDate()
@@ -1044,10 +1054,11 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
     def stopDetection(self):
         """停止缺陷检测过程"""
-        self.textBrowser.append("停止检测")
-        print(self.camera_id)
-        print(self.conf_thres)
-        print(self.iou_thres)
+        print(self.port)
+        print(self.baud_rate)
+        print(self.data_bits)
+        print(self.parity)
+        print(self.stop_bits)
 
     def selectWeightFile(self):
         """选择检测模型的权重文件"""
@@ -1059,9 +1070,28 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
     def testCommunication(self):
         """测试与外部设备的通信"""
-        self.textBrowser.append("正在测试通信...")
-        # 模拟通信测试
-        QtCore.QTimer.singleShot(1000, lambda: self.textBrowser.append("通信测试成功"))
+        ser = serial.Serial(port=self.port,
+                            baudrate=self.baud_rate,
+                            parity=serial.PARITY_NONE,
+                            bytesize=serial.EIGHTBITS,
+                            stopbits=serial.STOPBITS_ONE,
+                            timeout=0)
+        if ser.isOpen():
+            self.textBrowser.append("串口已打开")
+        else:
+            self.textBrowser.append("串口未打开")
+            return
+        ser.write(b'\x01')  # 发送开始信号给摄像头
+        time.sleep(1)
+        data = ser.read(10)
+        if b'\01' in data or b'\00' in data:
+            self.textBrowser.append("串口成功建立通信")
+            ser.write(b'\x00')  # 发送停止信号
+        else:
+            self.textBrowser.append("串口通信失败")
+            ser.write(b'\x00')  # 发送停止信号
+            return
+        ser.close()
 
     def testCloudService(self):
         """测试云服务连接"""
@@ -1197,6 +1227,36 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.iou_thres = iou_thres
         # 显示两位小数
         self.textBrowser.append(f"当前交叉比为：{iou_thres:.2f}")
+
+    def choose_port_list(self):
+        global port
+        port = self.comboBox_2.currentText()
+        self.port = port
+        self.textBrowser.append(f"当前串口为：{port}")
+
+    def choose_baud_rate(self):
+        global baud_rate
+        baud_rate = int(self.comboBox_3.currentText())
+        self.baud_rate = baud_rate
+        self.textBrowser.append(f"当前波特率为：{baud_rate}")
+
+    def choose_data_bits(self):
+        global data_bits
+        data_bits = int(self.comboBox_4.currentText())
+        self.data_bits = data_bits
+        self.textBrowser.append(f"当前数据位为：{data_bits}")
+
+    def choose_parity(self):
+        global parity
+        parity = self.comboBox_5.currentText()
+        self.parity = parity
+        self.textBrowser.append(f"当前校验位为：{parity}")
+
+    def choose_stop_bits(self):
+        global stop_bits
+        stop_bits = float(self.comboBox_7.currentText())
+        self.stop_bits = stop_bits
+        self.textBrowser.append(f"当前停止位为：{stop_bits}")
 
 
 if __name__ == "__main__":
