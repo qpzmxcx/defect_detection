@@ -909,7 +909,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.comboBox_3.currentIndexChanged.connect(self.choose_baud_rate)
         self.comboBox_4.currentIndexChanged.connect(self.choose_data_bits)
         self.comboBox_5.currentIndexChanged.connect(self.choose_parity)
-        self.comboBox_6.currentIndexChanged.connect(self.choose_stop_bits)
+        self.comboBox_7.currentIndexChanged.connect(self.choose_stop_bits)
 
         # 设置默认值
         self.doubleSpinBox.setValue(self.conf_thres)
@@ -946,23 +946,23 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
     def viewLeftcarbody(self):
         """查看车身左侧"""
         self.textBrowser.append("查看车身左侧")
-        # 调用opencurrentCamera打开左侧摄像头
-        self.opencurrentCamera(self.Leftcarbody_camera_id)
+        # 调用_opencurrentCamera打开左侧摄像头
+        self._opencurrentCamera(self.Leftcarbody_camera_id)
 
     def viewRightcarbody(self):
         """查看车身右侧"""
         self.textBrowser.append("查看车身右侧")
-        # 调用opencurrentCamera打开右侧摄像头
-        self.opencurrentCamera(self.Rightcarbody_camera_id)
+        # 调用_opencurrentCamera打开右侧摄像头
+        self._opencurrentCamera(self.Rightcarbody_camera_id)
 
     def viewRoofcarbody(self):
         """查看车身顶部"""
         self.textBrowser.append("查看车身顶部")
-        # 调用opencurrentCamera打开顶部摄像头
-        self.opencurrentCamera(self.Roofcarbody_camera_id)
+        # 调用_opencurrentCamera打开顶部摄像头
+        self._opencurrentCamera(self.Roofcarbody_camera_id)
 
-    def opencurrentCamera(self, Nowcamera_id):
-        """根据指定的摄像头ID打开摄像头"""
+    def _opencurrentCamera(self, Nowcamera_id):
+        """根据指定的摄像头ID打开摄像头（内部方法）"""
         # 如果当前摄像头已经打开，先关闭
         if self.camera is not None and self.camera.isActive():
             # 使用closeCamera函数关闭当前摄像头，但不改变按钮文本
@@ -1012,7 +1012,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             self.closeCamera()
         else:
             # 如果摄像头未打开，则打开摄像头
-            self.opencurrentCamera(self.camera_id)
+            self._opencurrentCamera(self.camera_id)
 
     def closeCamera(self):
         """关闭摄像头并将界面变为黑色"""
@@ -1030,8 +1030,8 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
     def changeCamera(self, index):
         """根据下拉框选择切换摄像头"""
-        # 直接调用opencurrentCamera打开指定编号的摄像头
-        self.opencurrentCamera(index)
+        # 直接调用_opencurrentCamera打开指定编号的摄像头
+        self._opencurrentCamera(index)
 
     def startDetection(self):
         """开始缺陷检测过程"""
@@ -1100,91 +1100,149 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
     def update_port_list(self):
         """更新可用串口列表"""
-        self.textBrowser.append("正在获取串口列表...")
-
-        # 获取系统中的所有串口
-        ports = []
-
-        # 检查是否安装了pyserial库
-        if not _has_serial:
-            self.textBrowser.append("未安装pyserial库，无法获取串口列表。请安装: pip install pyserial")
-            # 添加一些默认的串口作为占位
-            default_ports = ["COM1", "COM2", "COM3", "COM4"]
-            self.comboBox_2.clear()
-            for port in default_ports:
-                self.comboBox_2.addItem(port)
-            return default_ports
-
         try:
-            # 使用serial.tools.list_ports获取系统串口列表
-            ports_list = list(serial.tools.list_ports.comports())
+            # 检查UI控件是否存在
+            if not hasattr(self, 'textBrowser') or not hasattr(self, 'comboBox_2'):
+                print("UI控件尚未初始化")
+                return []
 
-            if not ports_list:
-                self.textBrowser.append("未发现串口设备")
-            else:
-                # 清空当前串口列表
+            self.textBrowser.append("正在获取串口列表...")
+
+            # 获取系统中的所有串口
+            ports = []
+
+            # 检查是否安装了pyserial库
+            if not _has_serial:
+                self.textBrowser.append("未安装pyserial库，无法获取串口列表。请安装: pip install pyserial")
+                # 添加一些默认的串口作为占位
+                default_ports = ["COM1", "COM2", "COM3", "COM4"]
                 self.comboBox_2.clear()
+                for port in default_ports:
+                    self.comboBox_2.addItem(port)
+                return default_ports
 
-                # 添加发现的串口
-                for port in ports_list:
-                    # 获取串口名称
-                    port_name = port.device
-                    # 添加到下拉列表
-                    self.comboBox_2.addItem(port_name)
-                    ports.append(port_name)
+            try:
+                # 使用serial.tools.list_ports获取系统串口列表
+                ports_list = list(serial.tools.list_ports.comports())
 
-                self.textBrowser.append(f"已发现{len(ports)}个串口设备")
+                if not ports_list:
+                    self.textBrowser.append("未发现串口设备")
+                    # 即使没有发现串口，也添加一些默认选项
+                    default_ports = ["COM1", "COM2", "COM3", "COM4"]
+                    self.comboBox_2.clear()
+                    for port in default_ports:
+                        self.comboBox_2.addItem(port)
+                    return default_ports
+                else:
+                    # 清空当前串口列表
+                    self.comboBox_2.clear()
 
-                # 如果有串口，选中第一个
-                if ports:
-                    self.comboBox_2.setCurrentIndex(0)
-        except Exception as e:
-            self.textBrowser.append(f"获取串口列表时出错: {str(e)}")
-            # 出错时添加一些默认的串口
-            default_ports = ["COM1", "COM2", "COM3", "COM4"]
-            self.comboBox_2.clear()
-            for port in default_ports:
-                self.comboBox_2.addItem(port)
-            return default_ports
+                    # 添加发现的串口
+                    for port in ports_list:
+                        try:
+                            # 获取串口名称
+                            port_name = port.device
+                            # 添加到下拉列表
+                            self.comboBox_2.addItem(port_name)
+                            ports.append(port_name)
+                        except Exception as port_error:
+                            print(f"处理串口 {port} 时出错: {port_error}")
+                            continue
 
-        return ports
+                    self.textBrowser.append(f"已发现{len(ports)}个串口设备")
+
+                    # 如果有串口，选中第一个
+                    if ports:
+                        self.comboBox_2.setCurrentIndex(0)
+
+            except ImportError as import_error:
+                self.textBrowser.append(f"导入串口库失败: {str(import_error)}")
+                # 添加默认串口
+                default_ports = ["COM1", "COM2", "COM3", "COM4"]
+                self.comboBox_2.clear()
+                for port in default_ports:
+                    self.comboBox_2.addItem(port)
+                return default_ports
+
+            except Exception as e:
+                self.textBrowser.append(f"获取串口列表时出错: {str(e)}")
+                # 出错时添加一些默认的串口
+                default_ports = ["COM1", "COM2", "COM3", "COM4"]
+                self.comboBox_2.clear()
+                for port in default_ports:
+                    self.comboBox_2.addItem(port)
+                return default_ports
+
+            return ports
+
+        except Exception as outer_error:
+            print(f"update_port_list函数发生严重错误: {outer_error}")
+            return []
 
     def refreshPorts(self):
         """刷新可用串口"""
-        # 更新串口列表
-        self.update_port_list()
+        try:
+            # 检查所有必要的UI控件是否存在
+            required_widgets = ['comboBox_2', 'comboBox_3', 'comboBox_4', 'comboBox_5', 'comboBox_7', 'textBrowser']
+            for widget_name in required_widgets:
+                if not hasattr(self, widget_name):
+                    print(f"UI控件 {widget_name} 尚未初始化")
+                    return
 
-        # 添加波特率选项
-        baud_rates = ["9600", "19200", "38400", "57600", "115200"]
-        self.comboBox_3.clear()
-        for rate in baud_rates:
-            self.comboBox_3.addItem(rate)
-        # 默认选择9600
-        self.comboBox_3.setCurrentText("9600")
+            # 更新串口列表
+            self.update_port_list()
 
-        # 添加数据位选项
-        data_bits = ["5", "6", "7", "8"]
-        self.comboBox_4.clear()
-        for bits in data_bits:
-            self.comboBox_4.addItem(bits)
-        # 默认选8位
-        self.comboBox_4.setCurrentText("8")
+            # 添加波特率选项
+            try:
+                baud_rates = ["9600", "19200", "38400", "57600", "115200"]
+                self.comboBox_3.clear()
+                for rate in baud_rates:
+                    self.comboBox_3.addItem(rate)
+                # 默认选择115200
+                self.comboBox_3.setCurrentText("115200")
+            except Exception as e:
+                print(f"设置波特率选项时出错: {e}")
 
-        # 添加校验位选项
-        parity_bits = ["无", "奇校验", "偶校验"]
-        self.comboBox_5.clear()
-        for parity in parity_bits:
-            self.comboBox_5.addItem(parity)
-        # 默认选择无校验
-        self.comboBox_5.setCurrentIndex(0)
+            # 添加数据位选项
+            try:
+                data_bits = ["8", "7", "6", "5"]
+                self.comboBox_4.clear()
+                for bits in data_bits:
+                    self.comboBox_4.addItem(bits)
+                # 默认选8位
+                self.comboBox_4.setCurrentText("8")
+            except Exception as e:
+                print(f"设置数据位选项时出错: {e}")
 
-        # 添加停止位选项
-        stop_bits = ["1", "1.5", "2"]
-        self.comboBox_7.clear()
-        for stop in stop_bits:
-            self.comboBox_7.addItem(stop)
-        # 默认选1位
-        self.comboBox_7.setCurrentText("1")
+            # 添加校验位选项
+            try:
+                parity_bits = ["无", "奇校验", "偶校验"]
+                self.comboBox_5.clear()
+                for parity in parity_bits:
+                    self.comboBox_5.addItem(parity)
+                # 默认选择无校验
+                self.comboBox_5.setCurrentIndex(0)
+            except Exception as e:
+                print(f"设置校验位选项时出错: {e}")
+
+            # 添加停止位选项
+            try:
+                stop_bits = ["1", "1.5", "2"]
+                self.comboBox_7.clear()
+                for stop in stop_bits:
+                    self.comboBox_7.addItem(stop)
+                # 默认选1位
+                self.comboBox_7.setCurrentText("1")
+            except Exception as e:
+                print(f"设置停止位选项时出错: {e}")
+
+            if hasattr(self, 'textBrowser'):
+                self.textBrowser.append("串口设置已刷新")
+
+        except Exception as e:
+            print(f"refreshPorts函数发生错误: {e}")
+            if hasattr(self, 'textBrowser'):
+                self.textBrowser.append(f"刷新串口时发生错误: {str(e)}")
 
     def searchHistory(self):
         """搜索历史检测记录"""
