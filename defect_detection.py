@@ -10,6 +10,7 @@ import numpy as np
 # 尝试导入serial模块，如果不存在则设置标志
 _has_serial = True
 try:
+    import serial  # 用于串口通信
     import serial.tools.list_ports  # 用于获取系统串口列表
 except ImportError:
     _has_serial = False
@@ -439,6 +440,98 @@ def run_rclone(command):
 # 运行时执行 run_rclone(["rclone", "copy", picture_path, myvm_path, "--progress"])
 
 
+# 通信测试线程类
+class CommunicationTestThread(QtCore.QThread):
+    # 自定义信号
+    update_text = QtCore.pyqtSignal(str)  # 更新文本信号
+    finished_signal = QtCore.pyqtSignal()  # 完成信号
+    error_signal = QtCore.pyqtSignal(str)  # 错误信号
+
+    def __init__(self, port, baud_rate, parent=None):
+        super().__init__(parent)
+        self.port = port
+        self.baud_rate = baud_rate
+
+    def run(self):
+        """在线程中运行通信测试"""
+        ser = None
+        try:
+            # 检查是否安装了 pyserial 库
+            if not _has_serial:
+                self.error_signal.emit("错误：未安装 pyserial 库，无法进行串口通信测试")
+                self.update_text.emit("请安装：pip install pyserial")
+                return
+
+            # 检查串口参数是否已设置
+            if not self.port:
+                self.error_signal.emit("错误：请先选择串口")
+                return
+
+            if not self.baud_rate:
+                self.error_signal.emit("错误：请先设置波特率")
+                return
+
+            self.update_text.emit(f"正在测试串口通信：{self.port}, 波特率：{self.baud_rate}")
+
+            # 尝试打开串口
+            ser = serial.Serial(port=self.port,
+                                baudrate=self.baud_rate,
+                                parity=serial.PARITY_NONE,
+                                bytesize=serial.EIGHTBITS,
+                                stopbits=serial.STOPBITS_ONE,
+                                timeout=1)  # 设置超时时间为1秒
+
+            if ser.isOpen():
+                self.update_text.emit("串口已成功打开")
+            else:
+                self.error_signal.emit("错误：串口未能打开")
+                return
+
+            # 发送测试信号
+            ser.write(b'\x01')  # 发送开始信号给摄像头
+            self.update_text.emit("已发送测试信号")
+
+            # 等待响应
+            time.sleep(1)
+            data = ser.read(10)
+
+            # 检查响应
+            if b'\01' in data or b'\00' in data:
+                self.update_text.emit("串口成功建立通信")
+                ser.write(b'\x00')  # 发送停止信号
+                self.update_text.emit("通信测试完成")
+            else:
+                self.update_text.emit("串口通信失败：未收到预期响应")
+                ser.write(b'\x00')  # 发送停止信号
+
+        except serial.SerialException as e:
+            self.error_signal.emit(f"串口错误：{str(e)}")
+            self.update_text.emit("请检查串口是否被其他程序占用或串口参数是否正确")
+
+        except ImportError as e:
+            self.error_signal.emit(f"导入错误：{str(e)}")
+            self.update_text.emit("请确保已安装 pyserial 库")
+
+        except AttributeError as e:
+            self.error_signal.emit(f"属性错误：{str(e)}")
+            self.update_text.emit("请检查串口参数设置是否完整")
+
+        except Exception as e:
+            self.error_signal.emit(f"通信测试发生未知错误：{str(e)}")
+
+        finally:
+            # 确保串口被正确关闭
+            if ser and ser.isOpen():
+                try:
+                    ser.close()
+                    self.update_text.emit("串口已关闭")
+                except Exception as close_error:
+                    self.error_signal.emit(f"关闭串口时出错：{str(close_error)}")
+
+            # 发送完成信号
+            self.finished_signal.emit()
+
+
 # PyQT界面参数配置
 class DefectDetectionApp(QtWidgets.QMainWindow):
     def __init__(self):
@@ -470,6 +563,9 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.camera = None
         self.capture_session = QMediaCaptureSession()
 
+        # 初始化线程相关变量
+        self.communication_test_thread = None
+
         self.setupUi()
 
     def closeEvent(self, event):
@@ -477,6 +573,14 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 关闭摄像头
         if self.camera is not None and self.camera.isActive():
             self.camera.stop()
+
+        # 停止通信测试线程
+        if self.communication_test_thread and self.communication_test_thread.isRunning():
+            self.communication_test_thread.requestInterruption()
+            self.communication_test_thread.wait(3000)  # 等待最多3秒
+            if self.communication_test_thread.isRunning():
+                self.communication_test_thread.terminate()  # 强制终止
+
         event.accept()
 
     def setVideoWidgetBlack(self):
@@ -1069,29 +1173,43 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.file_path = file_path
 
     def testCommunication(self):
-        """测试与外部设备的通信"""
-        ser = serial.Serial(port=self.port,
-                            baudrate=self.baud_rate,
-                            parity=serial.PARITY_NONE,
-                            bytesize=serial.EIGHTBITS,
-                            stopbits=serial.STOPBITS_ONE,
-                            timeout=0)
-        if ser.isOpen():
-            self.textBrowser.append("串口已打开")
-        else:
-            self.textBrowser.append("串口未打开")
+        """启动通信测试线程"""
+        # 检查是否有线程正在运行
+        if self.communication_test_thread and self.communication_test_thread.isRunning():
+            self.textBrowser.append("通信测试正在进行中，请等待完成...")
             return
-        ser.write(b'\x01')  # 发送开始信号给摄像头
-        time.sleep(1)
-        data = ser.read(10)
-        if b'\01' in data or b'\00' in data:
-            self.textBrowser.append("串口成功建立通信")
-            ser.write(b'\x00')  # 发送停止信号
-        else:
-            self.textBrowser.append("串口通信失败")
-            ser.write(b'\x00')  # 发送停止信号
+
+        # 检查串口参数是否已设置
+        if not hasattr(self, 'port') or not self.port:
+            self.textBrowser.append("错误：请先选择串口")
             return
-        ser.close()
+
+        if not hasattr(self, 'baud_rate') or not self.baud_rate:
+            self.textBrowser.append("错误：请先设置波特率")
+            return
+
+        # 禁用通信测试按钮，防止重复点击
+        self.pushButton_4.setEnabled(False)
+        self.textBrowser.append("开始通信测试...")
+
+        # 创建并启动通信测试线程
+        self.communication_test_thread = CommunicationTestThread(self.port, self.baud_rate, self)
+        self.communication_test_thread.update_text.connect(self.textBrowser.append)
+        self.communication_test_thread.error_signal.connect(self.handle_communication_error)
+        self.communication_test_thread.finished_signal.connect(self.communication_test_completed)
+        self.communication_test_thread.start()
+
+    def handle_communication_error(self, error_msg):
+        """处理通信测试中的错误"""
+        self.textBrowser.append(f"错误: {error_msg}")
+        # 重新启用通信测试按钮
+        self.pushButton_4.setEnabled(True)
+
+    def communication_test_completed(self):
+        """通信测试完成后的处理"""
+        self.textBrowser.append("通信测试流程完成")
+        # 重新启用通信测试按钮
+        self.pushButton_4.setEnabled(True)
 
     def testCloudService(self):
         """测试云服务连接"""
