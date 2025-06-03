@@ -29,6 +29,9 @@ from utils.datasets import LoadImages
 from utils.general import check_img_size, non_max_suppression, scale_coords, xyxy2xywh, set_logging
 from utils.torch_utils import select_device, time_synchronized
 from utils.plots import plot_one_box
+
+
+
 # 凹坑检测代码
 def dent_detect(weights='weights/aoxian&huahen.pt', source='data/val', img_size=640, conf_thres=0.25,
                 iou_thres=0.45, device='', classes=1, agnostic_nms=False, augment=False,
@@ -455,6 +458,7 @@ class CommunicationTestThread(QtCore.QThread):
     def run(self):
         """在线程中运行通信测试"""
         ser = None
+        self.update_text.emit("")
         try:
             # 检查是否安装了 pyserial 库
             if not _has_serial:
@@ -501,7 +505,7 @@ class CommunicationTestThread(QtCore.QThread):
                 ser.write(b'\x00')  # 发送停止信号
                 self.update_text.emit("通信测试完成")
             else:
-                self.update_text.emit("串口通信失败：未收到预期响应")
+                self.update_text.emit("串口通信失败：未收到正确结果")
                 ser.write(b'\x00')  # 发送停止信号
 
         except serial.SerialException as e:
@@ -532,17 +536,275 @@ class CommunicationTestThread(QtCore.QThread):
             self.finished_signal.emit()
 
 
+# 视频录制线程类
+class RecordingThread(QtCore.QThread):
+    # 自定义信号
+    update_text = QtCore.pyqtSignal(str)  # 更新文本信号
+    finished_signal = QtCore.pyqtSignal()  # 完成信号
+    error_signal = QtCore.pyqtSignal(str)  # 错误信号
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_app = parent
+        self.running = False
+
+    def run(self):
+        """在线程中运行视频录制"""
+        ser = None
+        self.update_text.emit("")
+        try:
+            # 检查是否安装了 pyserial 库
+            if not _has_serial:
+                self.error_signal.emit("错误：未安装 pyserial 库，无法进行串口通信")
+                self.update_text.emit("请安装：pip install pyserial")
+                return
+
+            # 获取串口参数
+            if hasattr(self.parent_app, 'port') and self.parent_app.port:
+                port = self.parent_app.port
+            else:
+                self.error_signal.emit("错误：请先选择串口")
+                return
+
+            if hasattr(self.parent_app, 'baud_rate') and self.parent_app.baud_rate:
+                baud_rate = self.parent_app.baud_rate
+            else:
+                self.error_signal.emit("错误：请先设置波特率")
+                return
+
+            # 获取其他串口参数
+            data_bits = getattr(self.parent_app, 'data_bits', 8)
+            parity = getattr(self.parent_app, 'parity', 'N')
+            stop_bits = getattr(self.parent_app, 'stop_bits', 1)
+
+            self.update_text.emit(f"正在初始化录制：串口 {port}, 波特率：{baud_rate}")
+            self.update_text.emit(f"串口参数：数据位 {data_bits}, 校验位 {parity}, 停止位 {stop_bits}")
+
+            # 获取录制参数（以DefectDetectionApp中的参数为主）
+            camera_ids = getattr(self.parent_app, 'camera_ids', 2)
+            picture_width = getattr(self.parent_app, 'picture_width', 640)
+            picture_height = getattr(self.parent_app, 'picture_height', 480)
+
+            # 创建以检测时间为子文件夹的输出目录结构
+            import datetime
+            current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # 视频文件夹（直接在时间戳文件夹中）
+            video_base_folder = 'data/car_video'
+            video_time_folder = os.path.join(video_base_folder, current_time)
+            output_video_folder = video_time_folder
+
+            # 帧图片文件夹
+            picture_base_folder = 'data/car_picture'
+            picture_time_folder = os.path.join(picture_base_folder, current_time)
+            output_frames_folder = picture_time_folder
+
+            # 创建文件夹结构
+            if not os.path.exists(output_video_folder):
+                os.makedirs(output_video_folder)
+            if not os.path.exists(output_frames_folder):
+                os.makedirs(output_frames_folder)
+
+            self.update_text.emit(f"创建视频输出目录：{video_time_folder}")
+            self.update_text.emit(f"创建图片输出目录：{picture_time_folder}")
+
+            # 保存文件夹路径供后续使用
+            self.video_time_folder = video_time_folder
+            self.picture_time_folder = picture_time_folder
+            self.output_video_folder = output_video_folder
+            self.output_frames_folder = output_frames_folder
+
+            # 初始化摄像头列表
+            caps = []
+            outs = []
+            for i in range(camera_ids):
+                cap = cv2.VideoCapture(i)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, picture_width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, picture_height)
+                caps.append(cap)
+
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                out = cv2.VideoWriter(f'{output_video_folder}/output{i}.avi', fourcc, 30.0,
+                                    (picture_width, picture_height))
+                outs.append(out)
+
+            self.update_text.emit(f"已初始化 {camera_ids} 个摄像头")
+
+            # 根据界面参数配置串口
+            # 校验位映射
+            parity_map = {
+                'N': serial.PARITY_NONE,
+                '无': serial.PARITY_NONE,
+                'E': serial.PARITY_EVEN,
+                '偶校验': serial.PARITY_EVEN,
+                'O': serial.PARITY_ODD,
+                '奇校验': serial.PARITY_ODD
+            }
+
+            # 停止位映射
+            stopbits_map = {
+                1: serial.STOPBITS_ONE,
+                1.0: serial.STOPBITS_ONE,
+                1.5: serial.STOPBITS_ONE_POINT_FIVE,
+                2: serial.STOPBITS_TWO,
+                2.0: serial.STOPBITS_TWO
+            }
+
+            # 获取串口配置
+            serial_parity = parity_map.get(parity, serial.PARITY_NONE)
+            serial_stopbits = stopbits_map.get(stop_bits, serial.STOPBITS_ONE)
+
+            # 尝试打开串口
+            ser = serial.Serial(port=port,
+                                baudrate=baud_rate,
+                                parity=serial_parity,
+                                bytesize=data_bits,
+                                stopbits=serial_stopbits,
+                                timeout=0)  # 非阻塞模式
+
+            if ser.isOpen():
+                self.update_text.emit("串口已成功打开")
+            else:
+                self.error_signal.emit("错误：串口未能打开")
+                return
+
+            # 发送开始信号给摄像头
+            ser.write(b'\x01')
+            self.update_text.emit("已发送开始信号")
+            time.sleep(1)
+
+            # 检查通信
+            data = ser.read(10)
+            if b'\01' in data or b'\00' in data:
+                self.update_text.emit("串口成功建立通信")
+            else:
+                self.update_text.emit("串口通信检测：未收到响应，继续等待录制信号...")
+
+            # 等待录制信号
+            self.update_text.emit("等待录制信号...")
+            while not self.isInterruptionRequested():
+                data = ser.read(10)
+                if data:
+                    if b'\x01' in data:
+                        self.update_text.emit("收到录制开始信号，开始录像")
+                        recording = True
+
+                        # 录制循环
+                        while recording and not self.isInterruptionRequested():
+                            for i in range(camera_ids):
+                                ret, frame = caps[i].read()
+                                if ret:
+                                    outs[i].write(frame)
+
+                            # 检查停止信号
+                            data = ser.read(10)
+                            if b'\x00' in data:
+                                self.update_text.emit("收到停止信号，停止录像")
+                                ser.write(b'\x00')  # 发送停止确认信号
+                                recording = False
+                                break
+
+                        # 释放摄像头和视频写入器
+                        for i in range(camera_ids):
+                            caps[i].release()
+                            outs[i].release()
+
+                        self.update_text.emit("录像停止，视频已保存")
+                        break
+
+                # 短暂休眠避免过度占用CPU
+                time.sleep(0.01)
+
+            # 关闭串口
+            if ser and ser.isOpen():
+                ser.close()
+                self.update_text.emit("串口已关闭")
+
+            # 处理视频提取帧
+            self.update_text.emit("开始提取视频帧...")
+            for camera_id in range(camera_ids):
+                video_path = os.path.join(output_video_folder, f'output{camera_id}.avi')
+                if not os.path.exists(video_path):
+                    self.update_text.emit(f"警告：视频文件 {video_path} 不存在，跳过")
+                    continue
+
+                cap = cv2.VideoCapture(video_path)
+                if not cap.isOpened():
+                    self.error_signal.emit(f"视频文件 {video_path} 打开失败！")
+                    continue
+
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.release()
+
+                if total_frames > 0:
+                    # 提取4个关键帧
+                    frames_to_extract = [int(total_frames / 4 * j - 1) for j in range(1, 5)]
+                    self.extract_frames(camera_id, video_path, frames_to_extract, output_frames_folder)
+                    self.update_text.emit(f"成功提取摄像头 {camera_id} 的视频帧")
+                else:
+                    self.update_text.emit(f"警告：摄像头 {camera_id} 的视频文件为空")
+
+            self.update_text.emit("视频录制和帧提取完成！")
+            self.finished_signal.emit()
+
+        except serial.SerialException as e:
+            self.error_signal.emit(f"串口错误：{str(e)}")
+            self.update_text.emit("请检查串口是否被其他程序占用或串口参数是否正确")
+
+        except ImportError as e:
+            self.error_signal.emit(f"导入错误：{str(e)}")
+            self.update_text.emit("请确保已安装 pyserial 库")
+
+        except Exception as e:
+            self.error_signal.emit(f"录制过程中发生未知错误：{str(e)}")
+
+        finally:
+            # 确保串口被正确关闭
+            if ser and ser.isOpen():
+                try:
+                    ser.close()
+                    self.update_text.emit("串口已关闭")
+                except Exception as close_error:
+                    self.error_signal.emit(f"关闭串口时出错：{str(close_error)}")
+
+    def extract_frames(self, camera_id, video_path, frame_numbers, output_frames_folder):
+        """从视频中提取指定帧"""
+        frame_index = 1
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        for frame_number in frame_numbers:
+            if frame_number >= total_frames or frame_number < 0:
+                continue
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            ret, frame = cap.read()
+            if not ret:
+                self.update_text.emit(f"错误: 无法读取摄像头 {camera_id} 的第 {frame_number} 帧")
+                continue
+
+            # 按照摄像头编号_图片编号命名（如：1-1、1-2、1-3、1-4）
+            # 摄像头编号从1开始（camera_id + 1）
+            frame_filename = os.path.join(output_frames_folder, f'{camera_id + 1}-{frame_index}.jpg')
+            cv2.imwrite(frame_filename, frame)
+            frame_index += 1
+
+        cap.release()
+
+
 # PyQT界面参数配置
 class DefectDetectionApp(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
         # 初始化参数
+        self.picture_width = 640 # 采集图片宽度
+        self.picture_height = 480 # 采集图片高度
         self.camera_ids = 2 # 总摄像头数量
         self.Nowcamera_id = 0 # 当前摄像头编号
         self.camera_id = 0  # 摄像头编号
-        self.camera_width = 1024  # 视频宽度
-        self.camera_height = 576  # 视频高度
+        self.camera_width = 1024  # 视频显示宽度
+        self.camera_height = 576  # 视频显示高度
         self.conf_thres = 0.5  # 置信度阈值
         self.iou_thres = 0.5  # 交叉比阈值
         self.Leftcarbody_camera_id = 0 # 左侧车身摄像头编号
@@ -565,6 +827,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
         # 初始化线程相关变量
         self.communication_test_thread = None
+        self.recording_thread = None
 
         self.setupUi()
 
@@ -580,6 +843,13 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             self.communication_test_thread.wait(3000)  # 等待最多3秒
             if self.communication_test_thread.isRunning():
                 self.communication_test_thread.terminate()  # 强制终止
+
+        # 停止录制线程
+        if self.recording_thread and self.recording_thread.isRunning():
+            self.recording_thread.requestInterruption()
+            self.recording_thread.wait(3000)  # 等待最多3秒
+            if self.recording_thread.isRunning():
+                self.recording_thread.terminate()  # 强制终止
 
         event.accept()
 
@@ -1093,6 +1363,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 确保视频窗口可见并清除黑色背景
         self.videoWidget.show()
         self.videoWidget.setStyleSheet("")
+        self.videoWidget.setAspectRatioMode(Qt.AspectRatioMode.IgnoreAspectRatio)
 
         # 创建摄像头对象
         self.camera = QCamera(available_cameras[Nowcamera_id])
@@ -1151,10 +1422,20 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             return
 
         self.textBrowser.append("开始检测...")
-        self.textBrowser.append(f"置信度阈值: {self.conf_thres}")
-        self.textBrowser.append(f"交叉比阈值: {self.iou_thres}")
+        self.textBrowser.append(f"置信度阈值: {self.conf_thres:.2f}")
+        self.textBrowser.append(f"交叉比阈值: {self.iou_thres:.2f}")
         self.textBrowser.append(f"划痕检测: {'开启' if self.scratch_detection else '关闭'}")
         self.textBrowser.append(f"凹坑检测: {'开启' if self.dents_detection else '关闭'}")
+
+        self.pushButton_13.setEnabled(False)
+        self.textBrowser.append("开始录制和检测过程...")
+
+        # 创建并启动录制线程
+        self.recording_thread = RecordingThread(self)
+        self.recording_thread.update_text.connect(self.textBrowser.append)
+        self.recording_thread.error_signal.connect(self.handle_thread_error)
+        self.recording_thread.finished_signal.connect(self.start_detection_process)
+        self.recording_thread.start()
 
     def stopDetection(self):
         """停止缺陷检测过程"""
@@ -1210,6 +1491,72 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.textBrowser.append("通信测试流程完成")
         # 重新启用通信测试按钮
         self.pushButton_4.setEnabled(True)
+
+    def handle_thread_error(self, error_msg):
+        """处理线程中的错误"""
+        self.textBrowser.append(f"错误: {error_msg}")
+        # 重新启用开始检测按钮
+        self.pushButton_13.setEnabled(True)
+
+    def start_detection_process(self):
+        """录制完成后开始检测处理"""
+        self.textBrowser.append("录制完成，开始进行缺陷检测...")
+
+        # 获取检测参数
+        weights = getattr(self, 'file_path', 'weights/aoxian&huahen.pt')
+        conf_thres = getattr(self, 'conf_thres', 0.5)
+        iou_thres = getattr(self, 'iou_thres', 0.5)
+        scratch_detection = getattr(self, 'scratch_detection', True)
+        dents_detection = getattr(self, 'dents_detection', True)
+
+        try:
+            # 获取最新的录制文件夹路径
+            if hasattr(self.recording_thread, 'output_frames_folder'):
+                source_folder = self.recording_thread.output_frames_folder
+                self.textBrowser.append(f"使用录制文件夹：{source_folder}")
+            else:
+                # 回退到默认路径
+                source_folder = 'output/output_frames'
+                self.textBrowser.append("使用默认检测文件夹")
+
+            # 执行检测
+            total_defects = 0
+
+            if scratch_detection and dents_detection:
+                # 执行综合检测
+                self.textBrowser.append("执行综合缺陷检测（划痕+凹坑）...")
+                total_defects = detect(weights=weights,
+                                     source=source_folder,
+                                     conf_thres=conf_thres,
+                                     iou_thres=iou_thres)
+
+            elif scratch_detection:
+                # 仅执行划痕检测
+                self.textBrowser.append("执行划痕检测...")
+                total_defects = scratch_detect(weights=weights,
+                                             source=source_folder,
+                                             conf_thres=conf_thres,
+                                             iou_thres=iou_thres)
+
+            elif dents_detection:
+                # 仅执行凹坑检测
+                self.textBrowser.append("执行凹坑检测...")
+                total_defects = dent_detect(weights=weights,
+                                          source=source_folder,
+                                          conf_thres=conf_thres,
+                                          iou_thres=iou_thres)
+
+            # 显示检测结果
+            self.textBrowser.append(f"检测完成！共发现 {total_defects} 个缺陷")
+            self.textBrowser.append("可以在'查看结果'标签页中查看详细结果")
+
+        except Exception as e:
+            self.handle_thread_error(f"检测过程中发生错误: {str(e)}")
+            return
+
+        # 重新启用开始检测按钮
+        self.pushButton_13.setEnabled(True)
+        self.textBrowser.append("检测流程完成！")
 
     def testCloudService(self):
         """测试云服务连接"""
