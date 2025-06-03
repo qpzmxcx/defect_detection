@@ -1,0 +1,4 @@
+timestamp,detection_time,timestamp_folder,detection_type,car_color,dent_count,scratch_count,total_count,model_file,conf_threshold,iou_threshold,result_path
+20250603_183657,2025-06-03 18:36:57,20250603_183639,combined_detection,black,0,0,0,aoxian&huahen.pt,0.25,0.45,data/car_result/20250603_183639/
+20250603_183804,2025-06-03 18:38:04,20250603_183749,combined_detection,black,0,0,0,aoxian&huahen.pt,0.25,0.45,data/car_result/20250603_183749/
+20250603_183900,2025-06-03 18:39:00,20250603_183845,combined_detection,black,0,0,0,aoxian&huahen.pt,0.25,0.45,data/car_result/20250603_183845/
