@@ -1138,11 +1138,11 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.comboBox_8 = QtWidgets.QComboBox(parent=self.tab_4)
         self.comboBox_8.setGeometry(QtCore.QRect(120, 19, 31, 22))
         self.comboBox_8.setObjectName("comboBox_8")
-        self.comboBox_8.addItem("")
-        self.comboBox_8.addItem("")
-        self.comboBox_8.addItem("")
-        self.comboBox_8.addItem("")
-        self.comboBox_8.addItem("")
+        self.comboBox_8.addItem("0")
+        self.comboBox_8.addItem("1")
+        self.comboBox_8.addItem("2")
+        self.comboBox_8.addItem("3")
+        self.comboBox_8.addItem("4")
         self.pushButton_19 = QtWidgets.QPushButton(parent=self.tab_4)
         self.pushButton_19.setGeometry(QtCore.QRect(190, 20, 81, 21))
         self.pushButton_19.setObjectName("pushButton_19")
@@ -1312,6 +1312,10 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 历史记录搜索
         self.pushButton_17.clicked.connect(self.searchHistory)
 
+        # 查看结果界面
+        self.pushButton_19.clicked.connect(self.viewDetectionResults)
+        self.comboBox_8.currentIndexChanged.connect(self.changeCameraForResults)
+
         # 摄像头选择下拉框
         self.comboBox.currentIndexChanged.connect(self.changeCamera)
 
@@ -1352,6 +1356,9 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
         # 初始化时将视频显示区域设置为黑色
         self.setVideoWidgetBlack()
+
+        # 初始化查看结果界面
+        self.initializeResultsView()
 
     # 各种功能方法
     def viewLeftcarbody(self):
@@ -1980,6 +1987,284 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         stop_bits = float(self.comboBox_7.currentText())
         self.stop_bits = stop_bits
         self.textBrowser.append(f"当前停止位为：{stop_bits}")
+
+    # 查看结果界面相关方法
+    def initializeResultsView(self):
+        """初始化查看结果界面"""
+        try:
+            # 获取最新的时间戳文件夹
+            self.latest_timestamp = self.getLatestTimestamp()
+
+            # 初始化当前选择的摄像头编号（从0开始）
+            self.current_camera_for_results = 0
+
+            # 设置默认的摄像头编号
+            self.comboBox_8.setCurrentIndex(0)  # 默认选择第一个摄像头（编号0）
+
+            # 在textBrowser_2中显示初始化信息
+            if self.latest_timestamp:
+                self.textBrowser_2.append(f"已加载最新检测结果：{self.latest_timestamp}")
+                self.textBrowser_2.append(f"当前选择摄像头编号：{self.current_camera_for_results}")
+                self.textBrowser_2.append("点击'查看'按钮显示对应摄像头的检测结果")
+            else:
+                self.textBrowser_2.append("未找到检测结果文件夹")
+                self.textBrowser_2.append("请先进行缺陷检测")
+
+        except Exception as e:
+            self.textBrowser_2.append(f"初始化查看结果界面时出错：{str(e)}")
+
+    def getLatestTimestamp(self):
+        """获取最新的时间戳文件夹"""
+        try:
+            # 检查car_result文件夹
+            result_base_path = 'data/car_result'
+            if not os.path.exists(result_base_path):
+                return None
+
+            # 获取所有时间戳文件夹
+            timestamp_folders = []
+            for item in os.listdir(result_base_path):
+                item_path = os.path.join(result_base_path, item)
+                if os.path.isdir(item_path):
+                    timestamp_folders.append(item)
+
+            if not timestamp_folders:
+                return None
+
+            # 按时间戳排序，获取最新的
+            timestamp_folders.sort(reverse=True)
+            return timestamp_folders[0]
+
+        except Exception as e:
+            print(f"获取最新时间戳时出错：{str(e)}")
+            return None
+
+    def changeCameraForResults(self):
+        """改变查看结果的摄像头编号"""
+        try:
+            # 获取选择的摄像头编号（从comboBox_8的索引得到实际编号）
+            camera_index = self.comboBox_8.currentIndex()
+            self.current_camera_for_results = camera_index
+
+            self.textBrowser_2.append(f"已选择摄像头编号：{self.current_camera_for_results}")
+            self.textBrowser_2.append("点击'查看'按钮显示该摄像头的检测结果")
+
+        except Exception as e:
+            self.textBrowser_2.append(f"切换摄像头时出错：{str(e)}")
+
+    def viewDetectionResults(self):
+        """查看检测结果"""
+        try:
+            self.textBrowser_2.append("=" * 50)
+            self.textBrowser_2.append(f"正在加载摄像头 {self.current_camera_for_results} 的检测结果...")
+
+            # 获取最新的时间戳（如果需要刷新）
+            if not hasattr(self, 'latest_timestamp') or not self.latest_timestamp:
+                self.latest_timestamp = self.getLatestTimestamp()
+
+            if not self.latest_timestamp:
+                self.textBrowser_2.append("错误：未找到检测结果文件夹")
+                self.textBrowser_2.append("请先进行缺陷检测")
+                return
+
+            # 显示对应摄像头的图片
+            self.displayCameraImages()
+
+            # 显示检测结果信息
+            self.displayDetectionInfo()
+
+            self.textBrowser_2.append(f"摄像头 {self.current_camera_for_results} 的检测结果加载完成")
+
+        except Exception as e:
+            self.textBrowser_2.append(f"查看检测结果时出错：{str(e)}")
+
+    def displayCameraImages(self):
+        """显示对应摄像头的图片在label_8、label_9、label_10、label_11中"""
+        try:
+            # 构建图片路径
+            result_folder = f"data/car_result/{self.latest_timestamp}"
+
+            # 清空之前的图片
+            self.label_8.clear()
+            self.label_9.clear()
+            self.label_10.clear()
+            self.label_11.clear()
+            self.label_8.setText("图片1")
+            self.label_9.setText("图片2")
+            self.label_10.setText("图片3")
+            self.label_11.setText("图片4")
+
+            # 查找该摄像头的图片文件（使用摄像头编号+1来匹配文件名）
+            camera_images = []
+            camera_number = self.current_camera_for_results + 1  # 文件名中摄像头编号从1开始
+            if os.path.exists(result_folder):
+                for filename in os.listdir(result_folder):
+                    if filename.startswith(f"{camera_number}-") and filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                        camera_images.append(filename)
+
+            camera_images.sort()  # 按文件名排序
+
+            # 定义label列表
+            labels = [self.label_8, self.label_9, self.label_10, self.label_11]
+
+            if camera_images:
+                # 显示最多4张图片
+                for i, label in enumerate(labels):
+                    if i < len(camera_images):
+                        image_path = os.path.join(result_folder, camera_images[i])
+                        if os.path.exists(image_path):
+                            pixmap = QPixmap(image_path)
+                            if not pixmap.isNull():
+                                # 缩放图片以适应label大小
+                                scaled_pixmap = pixmap.scaled(label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                                label.setPixmap(scaled_pixmap)
+                                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                self.textBrowser_2.append(f"已显示摄像头 {self.current_camera_for_results} 的 {min(len(camera_images), 4)} 张检测结果图片")
+                self.textBrowser_2.append(f"该摄像头共有 {len(camera_images)} 张图片")
+            else:
+                self.textBrowser_2.append(f"未找到摄像头 {self.current_camera_for_results} 的图片")
+
+        except Exception as e:
+            self.textBrowser_2.append(f"显示图片时出错：{str(e)}")
+
+    def displayDetectionInfo(self):
+        """在listView中显示检测结果信息，仿照selection代码读取CSV文件"""
+        try:
+            # 首先清空listView
+            self.listView.setModel(None)
+
+            # 检查CSV文件是否存在
+            csv_path = f"data/car_result/{self.latest_timestamp}/detection_results.csv"
+            if not os.path.exists(csv_path):
+                self.textBrowser_2.append("错误：检测结果CSV文件不存在！")
+                return
+
+            # 创建一个临时的tableWidget来处理CSV数据
+            import csv
+            from PyQt6.QtCore import QStringListModel
+
+            # 读取CSV文件并过滤当前摄像头的数据
+            camera_number = self.current_camera_for_results + 1  # 文件名中摄像头编号从1开始
+            filtered_data = []
+            header = []
+
+            with open(csv_path, newline='', encoding='utf-8') as f:
+                csv_reader = csv.reader(f)
+                header = next(csv_reader)  # 读取表头
+
+                for row in csv_reader:
+                    # 检查图片名称是否属于当前摄像头
+                    if len(row) > 0 and row[0].startswith(f"{camera_number}-"):
+                        filtered_data.append(row)
+
+            # 创建显示信息列表
+            info_list = []
+            info_list.append(f"检测时间戳：{self.latest_timestamp}")
+            info_list.append(f"当前摄像头：{self.current_camera_for_results}")
+            info_list.append(f"CSV文件：detection_results.csv")
+            info_list.append(f"摄像头 {self.current_camera_for_results} 的检测结果：")
+            info_list.append("=" * 50)
+
+            if filtered_data:
+                # 添加表头
+                header_str = " | ".join(header)
+                info_list.append(header_str)
+                info_list.append("-" * len(header_str))
+
+                # 添加数据行
+                for row in filtered_data:
+                    row_str = " | ".join(str(item) for item in row)
+                    info_list.append(row_str)
+
+                info_list.append("=" * 50)
+                info_list.append(f"共找到 {len(filtered_data)} 个缺陷记录")
+            else:
+                info_list.append("该摄像头未检测到缺陷")
+
+            # 设置模型到listView
+            model = QStringListModel()
+            model.setStringList(info_list)
+            self.listView.setModel(model)
+
+            # 在textBrowser_2中反馈结果
+            self.textBrowser_2.append(f"成功读取CSV文件：detection_results.csv")
+            self.textBrowser_2.append(f"摄像头 {self.current_camera_for_results} 共有 {len(filtered_data)} 个缺陷记录")
+            self.textBrowser_2.append("检测结果已显示在列表中")
+
+        except Exception as e:
+            self.textBrowser_2.append(f"显示检测信息时出错：{str(e)}")
+
+    def getDetectionHistoryInfo(self):
+        """从检测历史记录中获取信息"""
+        try:
+            history_file = 'data/detect_history.csv'
+            if not os.path.exists(history_file):
+                return ["未找到检测历史记录文件"]
+
+            info_list = []
+
+            # 读取CSV文件
+            import csv
+            with open(history_file, 'r', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    if row['timestamp_folder'] == self.latest_timestamp:
+                        info_list.append(f"检测时间：{row['detection_time']}")
+                        info_list.append(f"检测类型：{row['detection_type']}")
+                        info_list.append(f"车身颜色：{row['car_color']}")
+                        info_list.append(f"总缺陷数：{row['total_count']}")
+                        info_list.append(f"划痕数量：{row['scratch_count']}")
+                        info_list.append(f"凹坑数量：{row['dent_count']}")
+                        info_list.append(f"模型文件：{row['model_file']}")
+                        info_list.append(f"置信度阈值：{row['conf_threshold']}")
+                        info_list.append(f"交叉比阈值：{row['iou_threshold']}")
+                        break
+
+            if not info_list:
+                info_list.append("未找到对应的检测历史记录")
+
+            return info_list
+
+        except Exception as e:
+            return [f"读取检测历史时出错：{str(e)}"]
+
+    def getCSVDetectionInfo(self):
+        """从CSV检测结果文件中获取信息"""
+        try:
+            csv_file = f"data/car_result/{self.latest_timestamp}/detection_results.csv"
+            if not os.path.exists(csv_file):
+                return ["未找到详细检测结果文件"]
+
+            info_list = []
+            camera_defects = []
+
+            # 读取CSV文件
+            import csv
+            camera_number = self.current_camera_for_results + 1  # 文件名中摄像头编号从1开始
+            with open(csv_file, 'r', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    # 检查是否是当前摄像头的图片
+                    image_name = row['image']
+                    if image_name.startswith(f"{camera_number}-"):
+                        camera_defects.append(row)
+
+            if camera_defects:
+                info_list.append(f"摄像头 {self.current_camera_for_results} 检测到 {len(camera_defects)} 个缺陷：")
+                for i, defect in enumerate(camera_defects, 1):
+                    info_list.append(f"  缺陷 {i}：")
+                    info_list.append(f"    图片：{defect['image']}")
+                    info_list.append(f"    类型：{defect['class']}")
+                    info_list.append(f"    置信度：{float(defect['confidence']):.2f}")
+                    info_list.append(f"    位置：({defect['x_min']},{defect['y_min']}) - ({defect['x_max']},{defect['y_max']})")
+            else:
+                info_list.append(f"摄像头 {self.current_camera_for_results} 未检测到缺陷")
+
+            return info_list
+
+        except Exception as e:
+            return [f"读取CSV检测结果时出错：{str(e)}"]
 
 
 if __name__ == "__main__":
