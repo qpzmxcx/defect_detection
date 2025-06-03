@@ -1,3 +1,0 @@
-image,defect_id,class,confidence,x_min,y_min,x_max,y_max
-AOXIAN01.jpg,1,aoxian,0.9306640625,1215,874,1279,950
-AOXIAN01.jpg,2,aoxian,0.96630859375,625,592,706,682
