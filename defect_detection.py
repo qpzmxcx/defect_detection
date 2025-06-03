@@ -457,9 +457,8 @@ def detect_color(image_path):
         main_color = "red"
     elif main_color == "white0" or main_color == "white1":
         main_color = "white"
-
+    print(main_color)
     return main_color
-
 
 # 云同步到服务器端
 import subprocess
@@ -837,6 +836,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 初始化参数
         self.picture_width = 640 # 采集图片宽度
         self.picture_height = 480 # 采集图片高度
+
         self.camera_ids = 2 # 总摄像头数量
         self.Nowcamera_id = 0 # 当前摄像头编号
         self.camera_id = 0  # 摄像头编号
@@ -1149,9 +1149,9 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.textBrowser_2 = QtWidgets.QTextBrowser(parent=self.tab_4)
         self.textBrowser_2.setGeometry(QtCore.QRect(730, 450, 400, 200))
         self.textBrowser_2.setObjectName("textBrowser_2")
-        self.listView = QtWidgets.QListView(parent=self.tab_4)
-        self.listView.setGeometry(QtCore.QRect(20, 460, 681, 192))
-        self.listView.setObjectName("listView")
+        self.tableWidget = QtWidgets.QTableWidget(parent=self.tab_4)
+        self.tableWidget.setGeometry(QtCore.QRect(20, 460, 681, 192))
+        self.tableWidget.setObjectName("tableWidget")
         self.checkBox_5 = QtWidgets.QCheckBox(parent=self.tab_4)
         self.checkBox_5.setGeometry(QtCore.QRect(1000, 20, 79, 20))
         font = QtGui.QFont()
@@ -1355,10 +1355,13 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.refreshPorts()
 
         # 初始化时将视频显示区域设置为黑色
-        self.setVideoWidgetBlack()
+        # self.setVideoWidgetBlack()
 
         # 初始化查看结果界面
         self.initializeResultsView()
+        self.pushButton_10.clicked.connect(self.viewLeftDetectionResults)
+        self.pushButton_9.clicked.connect(self.viewRightDetectionResults)
+        self.pushButton_8.clicked.connect(self.viewRoofDetectionResults)
 
     # 各种功能方法
     def viewLeftcarbody(self):
@@ -1613,6 +1616,9 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             # 保存检测历史记录
             self.save_detection_history(timestamp, total_defects, scratch_count, dent_count, scratch_detection, dents_detection, weights, conf_thres, iou_thres)
 
+            # 更新查看结果界面的最新时间戳
+            self.updateResultsViewTimestamp(timestamp)
+
         except Exception as e:
             self.handle_thread_error(f"检测过程中发生错误: {str(e)}")
             return
@@ -1727,43 +1733,6 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         except Exception as e:
             self.textBrowser.append(f"读取检测历史记录时出错：{str(e)}")
             return None
-
-    def show_detection_history(self):
-        """显示检测历史记录"""
-        try:
-            history_df = self.load_detection_history()
-
-            if history_df is None or history_df.empty:
-                self.textBrowser.append("No detection history found")
-                return
-
-            self.textBrowser.append("=== Detection History ===")
-            self.textBrowser.append(f"Total records: {len(history_df)}")
-
-            # 显示最近的10条记录
-            recent_records = history_df.tail(10)
-
-            for index, row in recent_records.iterrows():
-                self.textBrowser.append(f"")
-                self.textBrowser.append(f"Record {index + 1}:")
-                self.textBrowser.append(f"  Detection Time: {row['detection_time']}")
-                self.textBrowser.append(f"  Timestamp Folder: {row['timestamp_folder']}")
-                self.textBrowser.append(f"  Detection Type: {row['detection_type']}")
-                self.textBrowser.append(f"  Car Color: {row['car_color']}")
-                self.textBrowser.append(f"  Total Defects: {row['total_count']}")
-                self.textBrowser.append(f"  Scratches: {row['scratch_count']}")
-                self.textBrowser.append(f"  Dents: {row['dent_count']}")
-                self.textBrowser.append(f"  Model File: {row['model_file']}")
-                self.textBrowser.append(f"  Confidence Threshold: {row['conf_threshold']}")
-                self.textBrowser.append(f"  IoU Threshold: {row['iou_threshold']}")
-                self.textBrowser.append(f"  Result Path: {row['result_path']}")
-
-            if len(history_df) > 10:
-                self.textBrowser.append(f"")
-                self.textBrowser.append(f"Note: Only showing the latest 10 records. Check data/detect_history.csv for complete history")
-
-        except Exception as e:
-            self.textBrowser.append(f"Error displaying detection history: {str(e)}")
 
     def testCloudService(self):
         """测试云服务连接"""
@@ -1943,6 +1912,8 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 如果两种检测都关闭，显示警告
         if not self.scratch_detection and not self.dents_detection:
             self.textBrowser.append("警告: 所有检测类型已关闭，将无法进行缺陷检测！")
+        # 禁用检测按钮
+        self.pushButton_13.setEnabled(False)
 
     def change_confidence(self):
         global conf_thres
@@ -2001,6 +1972,9 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             # 设置默认的摄像头编号
             self.comboBox_8.setCurrentIndex(0)  # 默认选择第一个摄像头（编号0）
 
+            # 根据最新时间戳的历史记录设置复选框状态
+            self.setCheckboxesFromHistory()
+
             # 在textBrowser_2中显示初始化信息
             if self.latest_timestamp:
                 self.textBrowser_2.append(f"已加载最新检测结果：{self.latest_timestamp}")
@@ -2012,6 +1986,131 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
         except Exception as e:
             self.textBrowser_2.append(f"初始化查看结果界面时出错：{str(e)}")
+
+    def updateResultsViewTimestamp(self, new_timestamp):
+        """更新查看结果界面的最新时间戳"""
+        try:
+            if new_timestamp:
+                # 更新最新时间戳
+                self.latest_timestamp = new_timestamp
+
+                # 在textBrowser_2中显示更新信息
+                self.textBrowser_2.append("=" * 50)
+                self.textBrowser_2.append("检测完成，已更新查看结果界面！")
+                self.textBrowser_2.append(f"最新检测结果时间戳：{self.latest_timestamp}")
+                self.textBrowser_2.append(f"当前选择摄像头编号：{self.current_camera_for_results}")
+                self.textBrowser_2.append("可以点击'查看'按钮查看最新的检测结果")
+
+                # 根据新的时间戳更新复选框状态
+                self.setCheckboxesFromHistory()
+
+                # 提示用户可以查看最新结果
+                self.textBrowser.append("提示：查看结果界面已更新为最新检测结果")
+
+        except Exception as e:
+            self.textBrowser_2.append(f"更新查看结果界面时间戳时出错：{str(e)}")
+
+    def refreshResultsViewTimestamp(self):
+        """手动刷新查看结果界面的最新时间戳"""
+        try:
+            # 重新获取最新的时间戳
+            new_latest_timestamp = self.getLatestTimestamp()
+
+            if new_latest_timestamp and new_latest_timestamp != self.latest_timestamp:
+                # 如果找到了新的时间戳且与当前不同
+                old_timestamp = self.latest_timestamp
+                self.latest_timestamp = new_latest_timestamp
+
+                self.textBrowser_2.append("=" * 50)
+                self.textBrowser_2.append("已刷新查看结果界面！")
+                if old_timestamp:
+                    self.textBrowser_2.append(f"原时间戳：{old_timestamp}")
+                self.textBrowser_2.append(f"最新时间戳：{self.latest_timestamp}")
+                self.textBrowser_2.append("可以点击'查看'按钮查看最新的检测结果")
+
+                # 根据新的时间戳更新复选框状态
+                self.setCheckboxesFromHistory()
+
+            elif new_latest_timestamp == self.latest_timestamp:
+                self.textBrowser_2.append("当前已是最新的检测结果")
+            else:
+                self.textBrowser_2.append("未找到检测结果文件夹")
+
+        except Exception as e:
+            self.textBrowser_2.append(f"刷新查看结果界面时间戳时出错：{str(e)}")
+
+    def setCheckboxesFromHistory(self):
+        """根据最新时间戳的历史记录设置复选框状态"""
+        try:
+            if not self.latest_timestamp:
+                # 如果没有最新时间戳，设置默认状态
+                self.checkBox_5.setChecked(False)  # 查看凹坑
+                self.checkBox_6.setChecked(False)  # 查看划痕
+                self.checkBox_7.setChecked(True)   # 所有
+                self.textBrowser_2.append("未找到历史记录，设置为默认复选框状态")
+                return
+
+            # 读取检测历史记录文件
+            history_file = 'data/detect_history.csv'
+            if not os.path.exists(history_file):
+                self.textBrowser_2.append("未找到检测历史记录文件，设置为默认复选框状态")
+                self.checkBox_5.setChecked(False)
+                self.checkBox_6.setChecked(False)
+                self.checkBox_7.setChecked(True)
+                return
+
+            # 查找对应时间戳的记录
+            import csv
+            detection_type = None
+            with open(history_file, 'r', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    if row['timestamp_folder'] == self.latest_timestamp:
+                        detection_type = row['detection_type']
+                        break
+
+            if detection_type:
+                # 根据detection_type设置复选框状态
+                if detection_type == "combined_detection":
+                    # 综合检测：所有都勾选
+                    self.checkBox_5.setChecked(True)   # 查看凹坑
+                    self.checkBox_6.setChecked(True)   # 查看划痕
+                    self.checkBox_7.setChecked(True)   # 所有
+                    self.textBrowser_2.append("检测类型：综合检测 - 已勾选所有复选框")
+
+                elif detection_type == "scratch_detection":
+                    # 仅划痕检测
+                    self.checkBox_5.setChecked(False)  # 查看凹坑
+                    self.checkBox_6.setChecked(True)   # 查看划痕
+                    self.checkBox_7.setChecked(False)  # 所有
+                    self.textBrowser_2.append("检测类型：划痕检测 - 已勾选查看划痕")
+
+                elif detection_type == "dent_detection":
+                    # 仅凹坑检测
+                    self.checkBox_5.setChecked(True)   # 查看凹坑
+                    self.checkBox_6.setChecked(False)  # 查看划痕
+                    self.checkBox_7.setChecked(False)  # 所有
+                    self.textBrowser_2.append("检测类型：凹坑检测 - 已勾选查看凹坑")
+
+                else:
+                    # 未知检测类型，设置默认状态
+                    self.checkBox_5.setChecked(False)
+                    self.checkBox_6.setChecked(False)
+                    self.checkBox_7.setChecked(True)
+                    self.textBrowser_2.append(f"未知检测类型：{detection_type} - 设置为默认状态")
+            else:
+                # 未找到对应记录，设置默认状态
+                self.checkBox_5.setChecked(False)
+                self.checkBox_6.setChecked(False)
+                self.checkBox_7.setChecked(True)
+                self.textBrowser_2.append("未找到对应的历史记录，设置为默认复选框状态")
+
+        except Exception as e:
+            # 出错时设置默认状态
+            self.checkBox_5.setChecked(False)
+            self.checkBox_6.setChecked(False)
+            self.checkBox_7.setChecked(True)
+            self.textBrowser_2.append(f"设置复选框状态时出错：{str(e)} - 已设置为默认状态")
 
     def getLatestTimestamp(self):
         """获取最新的时间戳文件夹"""
@@ -2058,14 +2157,20 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             self.textBrowser_2.append("=" * 50)
             self.textBrowser_2.append(f"正在加载摄像头 {self.current_camera_for_results} 的检测结果...")
 
-            # 获取最新的时间戳（如果需要刷新）
-            if not hasattr(self, 'latest_timestamp') or not self.latest_timestamp:
-                self.latest_timestamp = self.getLatestTimestamp()
+            # 检查并更新到最新的时间戳
+            latest_available_timestamp = self.getLatestTimestamp()
 
-            if not self.latest_timestamp:
+            if not latest_available_timestamp:
                 self.textBrowser_2.append("错误：未找到检测结果文件夹")
                 self.textBrowser_2.append("请先进行缺陷检测")
                 return
+
+            # 如果发现有更新的时间戳，自动更新
+            if not hasattr(self, 'latest_timestamp') or not self.latest_timestamp or latest_available_timestamp != self.latest_timestamp:
+                if hasattr(self, 'latest_timestamp') and self.latest_timestamp and latest_available_timestamp != self.latest_timestamp:
+                    self.textBrowser_2.append(f"发现更新的检测结果，从 {self.latest_timestamp} 更新到 {latest_available_timestamp}")
+                self.latest_timestamp = latest_available_timestamp
+                self.textBrowser_2.append(f"当前使用时间戳：{self.latest_timestamp}")
 
             # 显示对应摄像头的图片
             self.displayCameraImages()
@@ -2129,142 +2234,412 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             self.textBrowser_2.append(f"显示图片时出错：{str(e)}")
 
     def displayDetectionInfo(self):
-        """在listView中显示检测结果信息，仿照selection代码读取CSV文件"""
+        """在tableWidget中显示检测结果信息，动态读取CSV文件的列信息并以表格形式显示"""
         try:
-            # 首先清空listView
-            self.listView.setModel(None)
-
             # 检查CSV文件是否存在
             csv_path = f"data/car_result/{self.latest_timestamp}/detection_results.csv"
             if not os.path.exists(csv_path):
                 self.textBrowser_2.append("错误：检测结果CSV文件不存在！")
                 return
 
-            # 创建一个临时的tableWidget来处理CSV数据
+            # 导入必要的模块
             import csv
-            from PyQt6.QtCore import QStringListModel
+
+            # 尝试导入pandas，如果失败则使用备用方法
+            try:
+                import pandas as pd
+                use_pandas = True
+            except ImportError:
+                self.textBrowser_2.append("提示：未安装pandas库，使用基础CSV读取方法")
+                use_pandas = False
 
             # 读取CSV文件并过滤当前摄像头的数据
             camera_number = self.current_camera_for_results + 1  # 文件名中摄像头编号从1开始
-            filtered_data = []
-            header = []
 
-            with open(csv_path, newline='', encoding='utf-8') as f:
-                csv_reader = csv.reader(f)
-                header = next(csv_reader)  # 读取表头
+            # 根据是否有pandas选择读取方法
+            if use_pandas:
+                # 使用pandas读取CSV文件，更好地处理数据
+                try:
+                    # 读取整个CSV文件
+                    df = pd.read_csv(csv_path, encoding='utf-8')
+                    csv_name = "detection_results.csv"
 
-                for row in csv_reader:
-                    # 检查图片名称是否属于当前摄像头
-                    if len(row) > 0 and row[0].startswith(f"{camera_number}-"):
-                        filtered_data.append(row)
+                    # 获取列名
+                    header = df.columns.tolist()
+                    self.textBrowser_2.append(f"CSV文件列信息：{header}")
 
-            # 创建显示信息列表
-            info_list = []
-            info_list.append(f"检测时间戳：{self.latest_timestamp}")
-            info_list.append(f"当前摄像头：{self.current_camera_for_results}")
-            info_list.append(f"CSV文件：detection_results.csv")
-            info_list.append(f"摄像头 {self.current_camera_for_results} 的检测结果：")
-            info_list.append("=" * 50)
+                    # 过滤当前摄像头的数据
+                    if 'image' in df.columns:
+                        # 过滤出当前摄像头的数据
+                        filtered_df = df[df['image'].str.startswith(f"{camera_number}-", na=False)]
+                    else:
+                        # 如果没有image列，显示所有数据
+                        filtered_df = df
+                        self.textBrowser_2.append("警告：CSV文件中没有找到'image'列，显示所有数据")
 
-            if filtered_data:
-                # 添加表头
-                header_str = " | ".join(header)
-                info_list.append(header_str)
-                info_list.append("-" * len(header_str))
+                    # 设置tableWidget的行数和列数
+                    row_count = len(filtered_df)
+                    col_count = len(header)
+                    self.tableWidget.setRowCount(row_count)
+                    self.tableWidget.setColumnCount(col_count)
 
-                # 添加数据行
-                for row in filtered_data:
-                    row_str = " | ".join(str(item) for item in row)
-                    info_list.append(row_str)
+                    # 创建中文表头映射
+                    header_mapping = {
+                        'image': '图片名称',
+                        'defect_id': '缺陷ID',
+                        'class': '缺陷类型',
+                        'confidence': '置信度',
+                        'x_min': 'X最小值',
+                        'y_min': 'Y最小值',
+                        'x_max': 'X最大值',
+                        'y_max': 'Y最大值'
+                    }
 
-                info_list.append("=" * 50)
-                info_list.append(f"共找到 {len(filtered_data)} 个缺陷记录")
+                    # 设置中文表头
+                    chinese_headers = []
+                    for h in header:
+                        chinese_headers.append(header_mapping.get(h, h))  # 如果没有映射则使用原名
+
+                    # 设置表头
+                    self.tableWidget.setHorizontalHeaderLabels(chinese_headers)
+
+                    # 清空之前的数据
+                    self.tableWidget.clearContents()
+
+                    if row_count > 0:
+                        # 填充表格数据
+                        for row_index in range(row_count):
+                            for col_index, column_name in enumerate(header):
+                                # 获取单元格数据
+                                cell_data = filtered_df.iloc[row_index, col_index]
+
+                                # 创建表格项
+                                from PyQt6.QtWidgets import QTableWidgetItem
+                                from PyQt6.QtCore import Qt
+
+                                # 对不同类型的数据进行格式化显示
+                                if column_name == 'confidence':  # 置信度列
+                                    try:
+                                        conf_value = float(cell_data)
+                                        formatted_data = f"{conf_value:.3f}"
+                                    except:
+                                        formatted_data = str(cell_data)
+                                elif column_name in ['x_min', 'y_min', 'x_max', 'y_max']:  # 坐标列
+                                    try:
+                                        coord_value = int(float(cell_data))
+                                        formatted_data = str(coord_value)
+                                    except:
+                                        formatted_data = str(cell_data)
+                                elif column_name == 'defect_id':  # 缺陷ID列
+                                    try:
+                                        id_value = int(float(cell_data))
+                                        formatted_data = str(id_value)
+                                    except:
+                                        formatted_data = str(cell_data)
+                                else:
+                                    # 处理NaN值和其他数据类型
+                                    if pd.isna(cell_data):
+                                        formatted_data = ""
+                                    else:
+                                        formatted_data = str(cell_data)
+
+                                item = QTableWidgetItem(formatted_data)
+
+                                # 设置文本居中对齐
+                                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                                # 设置为只读
+                                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+                                self.tableWidget.setItem(row_index, col_index, item)
+
+                        # 调整列宽以适应内容
+                        self.tableWidget.resizeColumnsToContents()
+
+                        # 设置表格属性
+                        self.tableWidget.setAlternatingRowColors(True)  # 交替行颜色
+                        self.tableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)  # 选择整行
+                        self.tableWidget.setSortingEnabled(True)  # 启用排序
+
+                        # 设置表格样式
+                        self.tableWidget.horizontalHeader().setStretchLastSection(True)  # 最后一列自动拉伸
+
+                    else:
+                        # 如果没有数据，显示提示信息
+                        self.tableWidget.setRowCount(1)
+                        self.tableWidget.setColumnCount(1)
+                        self.tableWidget.setHorizontalHeaderLabels(["提示信息"])
+                        from PyQt6.QtWidgets import QTableWidgetItem
+                        item = QTableWidgetItem("该摄像头未检测到缺陷")
+                        self.tableWidget.setItem(0, 0, item)
+                        self.tableWidget.resizeColumnsToContents()
+
+                    # 在textBrowser_2中反馈结果
+                    self.textBrowser_2.append(f"成功打开{csv_name}，一共 {row_count} 个缺陷记录！")
+                    self.textBrowser_2.append(f"摄像头 {self.current_camera_for_results} 的检测结果已在表格中显示")
+
+                    # 显示数据统计信息
+                    if row_count > 0:
+                        # 统计不同类型的缺陷
+                        if 'class' in filtered_df.columns:
+                            defect_types = filtered_df['class'].value_counts()
+                            self.textBrowser_2.append("缺陷类型统计：")
+                            for defect_type, count in defect_types.items():
+                                self.textBrowser_2.append(f"  {defect_type}: {count} 个")
+
+                except Exception as e:
+                    self.textBrowser_2.append(f"读取CSV文件时出错: {str(e)}")
+                    # 如果pandas读取失败，尝试使用原始csv模块
+                    try:
+                        self.textBrowser_2.append("尝试使用备用方法读取CSV文件...")
+                        self._fallback_csv_read(csv_path, camera_number)
+                    except Exception as fallback_error:
+                        self.textBrowser_2.append(f"备用方法也失败: {str(fallback_error)}")
             else:
-                info_list.append("该摄像头未检测到缺陷")
-
-            # 设置模型到listView
-            model = QStringListModel()
-            model.setStringList(info_list)
-            self.listView.setModel(model)
-
-            # 在textBrowser_2中反馈结果
-            self.textBrowser_2.append(f"成功读取CSV文件：detection_results.csv")
-            self.textBrowser_2.append(f"摄像头 {self.current_camera_for_results} 共有 {len(filtered_data)} 个缺陷记录")
-            self.textBrowser_2.append("检测结果已显示在列表中")
+                # 如果没有pandas，直接使用备用方法
+                try:
+                    self._fallback_csv_read(csv_path, camera_number)
+                except Exception as e:
+                    self.textBrowser_2.append(f"读取CSV文件失败: {str(e)}")
 
         except Exception as e:
             self.textBrowser_2.append(f"显示检测信息时出错：{str(e)}")
 
-    def getDetectionHistoryInfo(self):
-        """从检测历史记录中获取信息"""
-        try:
-            history_file = 'data/detect_history.csv'
-            if not os.path.exists(history_file):
-                return ["未找到检测历史记录文件"]
+    def _fallback_csv_read(self, csv_path, camera_number):
+        """读取csv文件"""
+        with open(csv_path, newline='', encoding='utf-8') as f:
+            csv_reader = csv.reader(f)
+            header = next(csv_reader)
 
-            info_list = []
+            # 过滤当前摄像头的数据
+            filtered_rows = []
+            for row in csv_reader:
+                if len(row) > 0 and row[0].startswith(f"{camera_number}-"):
+                    filtered_rows.append(row)
 
-            # 读取CSV文件
-            import csv
-            with open(history_file, 'r', encoding='utf-8') as file:
-                reader = csv.DictReader(file)
-                for row in reader:
-                    if row['timestamp_folder'] == self.latest_timestamp:
-                        info_list.append(f"检测时间：{row['detection_time']}")
-                        info_list.append(f"检测类型：{row['detection_type']}")
-                        info_list.append(f"车身颜色：{row['car_color']}")
-                        info_list.append(f"总缺陷数：{row['total_count']}")
-                        info_list.append(f"划痕数量：{row['scratch_count']}")
-                        info_list.append(f"凹坑数量：{row['dent_count']}")
-                        info_list.append(f"模型文件：{row['model_file']}")
-                        info_list.append(f"置信度阈值：{row['conf_threshold']}")
-                        info_list.append(f"交叉比阈值：{row['iou_threshold']}")
-                        break
+            # 创建中文表头映射
+            header_mapping = {
+                'image': '图片名称',
+                'defect_id': '缺陷ID',
+                'class': '缺陷类型',
+                'confidence': '置信度',
+                'x_min': 'X最小值',
+                'y_min': 'Y最小值',
+                'x_max': 'X最大值',
+                'y_max': 'Y最大值'
+            }
 
-            if not info_list:
-                info_list.append("未找到对应的检测历史记录")
+            # 设置中文表头
+            chinese_headers = []
+            for h in header:
+                chinese_headers.append(header_mapping.get(h, h))
 
-            return info_list
+            # 设置表格
+            row_count = len(filtered_rows)
+            self.tableWidget.setRowCount(row_count)
+            self.tableWidget.setColumnCount(len(header))
+            self.tableWidget.setHorizontalHeaderLabels(chinese_headers)
+            self.tableWidget.clearContents()
 
-        except Exception as e:
-            return [f"读取检测历史时出错：{str(e)}"]
+            if row_count > 0:
+                # 填充数据
+                for row_index, row_data in enumerate(filtered_rows):
+                    for col_index, cell_data in enumerate(row_data):
+                        from PyQt6.QtWidgets import QTableWidgetItem
+                        from PyQt6.QtCore import Qt
 
-    def getCSVDetectionInfo(self):
-        """从CSV检测结果文件中获取信息"""
-        try:
-            csv_file = f"data/car_result/{self.latest_timestamp}/detection_results.csv"
-            if not os.path.exists(csv_file):
-                return ["未找到详细检测结果文件"]
+                        # 对不同类型的数据进行格式化显示
+                        column_name = header[col_index]
+                        if column_name == 'confidence':  # 置信度列
+                            try:
+                                conf_value = float(cell_data)
+                                formatted_data = f"{conf_value:.3f}"
+                            except:
+                                formatted_data = str(cell_data)
+                        elif column_name in ['x_min', 'y_min', 'x_max', 'y_max']:  # 坐标列
+                            try:
+                                coord_value = int(float(cell_data))
+                                formatted_data = str(coord_value)
+                            except:
+                                formatted_data = str(cell_data)
+                        elif column_name == 'defect_id':  # 缺陷ID列
+                            try:
+                                id_value = int(float(cell_data))
+                                formatted_data = str(id_value)
+                            except:
+                                formatted_data = str(cell_data)
+                        else:
+                            formatted_data = str(cell_data)
 
-            info_list = []
-            camera_defects = []
+                        item = QTableWidgetItem(formatted_data)
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        self.tableWidget.setItem(row_index, col_index, item)
 
-            # 读取CSV文件
-            import csv
-            camera_number = self.current_camera_for_results + 1  # 文件名中摄像头编号从1开始
-            with open(csv_file, 'r', encoding='utf-8') as file:
-                reader = csv.DictReader(file)
-                for row in reader:
-                    # 检查是否是当前摄像头的图片
-                    image_name = row['image']
-                    if image_name.startswith(f"{camera_number}-"):
-                        camera_defects.append(row)
-
-            if camera_defects:
-                info_list.append(f"摄像头 {self.current_camera_for_results} 检测到 {len(camera_defects)} 个缺陷：")
-                for i, defect in enumerate(camera_defects, 1):
-                    info_list.append(f"  缺陷 {i}：")
-                    info_list.append(f"    图片：{defect['image']}")
-                    info_list.append(f"    类型：{defect['class']}")
-                    info_list.append(f"    置信度：{float(defect['confidence']):.2f}")
-                    info_list.append(f"    位置：({defect['x_min']},{defect['y_min']}) - ({defect['x_max']},{defect['y_max']})")
+                # 设置表格属性
+                self.tableWidget.setAlternatingRowColors(True)
+                self.tableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+                self.tableWidget.setSortingEnabled(True)
+                self.tableWidget.horizontalHeader().setStretchLastSection(True)
             else:
-                info_list.append(f"摄像头 {self.current_camera_for_results} 未检测到缺陷")
+                # 如果没有数据，显示提示信息
+                self.tableWidget.setRowCount(1)
+                self.tableWidget.setColumnCount(1)
+                self.tableWidget.setHorizontalHeaderLabels(["提示信息"])
+                from PyQt6.QtWidgets import QTableWidgetItem
+                item = QTableWidgetItem("该摄像头未检测到缺陷")
+                self.tableWidget.setItem(0, 0, item)
 
-            return info_list
+            # 优化列宽度自适应设置
+            self.optimizeTableColumnWidths()
+            self.textBrowser_2.append(f"成功读取 {row_count} 条缺陷记录")
+            self.textBrowser_2.append(f"摄像头 {self.current_camera_for_results} 的检测结果已在表格中显示")
+
+    def optimizeTableColumnWidths(self):
+        """优化表格列宽度自适应设置"""
+        try:
+            # 获取表格的总宽度
+            table_width = self.tableWidget.width()
+            column_count = self.tableWidget.columnCount()
+
+            if column_count == 0:
+                return
+
+            # 首先调整列宽以适应内容
+            self.tableWidget.resizeColumnsToContents()
+
+            # 获取各列的当前宽度
+            current_widths = []
+            total_content_width = 0
+            for i in range(column_count):
+                width = self.tableWidget.columnWidth(i)
+                current_widths.append(width)
+                total_content_width += width
+
+            # 记录调试信息（可选）
+            # self.textBrowser_2.append(f"表格宽度: {table_width}, 内容宽度: {total_content_width}")
+
+            # 定义各列的最小和最大宽度约束
+            column_constraints = {
+                '图片名称': {'min': 85, 'max': 160, 'preferred': 125},  # 图片名称需要更多空间
+                '缺陷ID': {'min': 55, 'max': 75, 'preferred': 65},     # ID列较窄即可
+                '缺陷类型': {'min': 75, 'max': 110, 'preferred': 90},   # 类型名称适中
+                '置信度': {'min': 65, 'max': 95, 'preferred': 80},     # 置信度数值列
+                'X最小值': {'min': 55, 'max': 85, 'preferred': 70},    # 坐标列紧凑
+                'Y最小值': {'min': 55, 'max': 85, 'preferred': 70},
+                'X最大值': {'min': 55, 'max': 85, 'preferred': 70},
+                'Y最大值': {'min': 55, 'max': 85, 'preferred': 70}
+            }
+
+            # 计算可用宽度（减去滚动条和边距）
+            available_width = table_width - 30  # 预留滚动条和边距空间
+
+            # 如果内容宽度小于可用宽度，按比例扩展
+            if total_content_width < available_width:
+                # 获取表头标签
+                headers = []
+                for i in range(column_count):
+                    header_item = self.tableWidget.horizontalHeaderItem(i)
+                    if header_item:
+                        headers.append(header_item.text())
+                    else:
+                        headers.append(f"列{i+1}")
+
+                # 计算新的列宽
+                new_widths = []
+                remaining_width = available_width
+
+                for i, (current_width, header) in enumerate(zip(current_widths, headers)):
+                    constraints = column_constraints.get(header, {'min': 50, 'max': 200, 'preferred': 100})
+
+                    if i == column_count - 1:  # 最后一列
+                        # 最后一列使用剩余宽度
+                        new_width = max(constraints['min'], min(constraints['max'], remaining_width))
+                    else:
+                        # 其他列使用首选宽度或当前宽度的较大值
+                        preferred_width = max(current_width, constraints['preferred'])
+                        new_width = max(constraints['min'], min(constraints['max'], preferred_width))
+                        remaining_width -= new_width
+
+                    new_widths.append(new_width)
+
+                # 应用新的列宽
+                for i, width in enumerate(new_widths):
+                    self.tableWidget.setColumnWidth(i, width)
+
+            else:
+                # 如果内容宽度大于可用宽度，设置最小宽度并启用水平滚动
+                headers = []
+                for i in range(column_count):
+                    header_item = self.tableWidget.horizontalHeaderItem(i)
+                    if header_item:
+                        headers.append(header_item.text())
+                    else:
+                        headers.append(f"列{i+1}")
+
+                for i, (current_width, header) in enumerate(zip(current_widths, headers)):
+                    constraints = column_constraints.get(header, {'min': 50, 'max': 200, 'preferred': 100})
+                    # 确保不小于最小宽度
+                    min_width = constraints['min']
+                    if current_width < min_width:
+                        self.tableWidget.setColumnWidth(i, min_width)
+
+            # 设置表格的水平滚动策略
+            from PyQt6.QtCore import Qt
+            self.tableWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+            # 设置表头的拉伸模式
+            header = self.tableWidget.horizontalHeader()
+            from PyQt6.QtWidgets import QHeaderView
+
+            # 如果总宽度小于可用宽度，最后一列拉伸填充
+            if total_content_width < available_width:
+                header.setStretchLastSection(True)
+            else:
+                header.setStretchLastSection(False)
+
+            # 设置表头可以手动调整列宽
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+
+            # 设置表格的其他显示属性
+            self.tableWidget.setShowGrid(True)  # 显示网格线
+            self.tableWidget.setGridStyle(Qt.PenStyle.SolidLine)  # 实线网格
+
+            # 设置表格的选择模式
+            self.tableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
 
         except Exception as e:
-            return [f"读取CSV检测结果时出错：{str(e)}"]
+            self.textBrowser_2.append(f"优化表格列宽时出错：{str(e)}")
+            # 如果出错，回退到基本的自适应方法
+            self.tableWidget.resizeColumnsToContents()
+
+    def resizeTableToFitWindow(self):
+        """当窗口大小改变时重新调整表格列宽"""
+        try:
+            if hasattr(self, 'tableWidget') and self.tableWidget.columnCount() > 0:
+                # 延迟执行，确保窗口大小已经更新
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(100, self.optimizeTableColumnWidths)
+        except Exception as e:
+            pass  # 静默处理错误，避免影响主要功能
+
+    def viewLeftDetectionResults(self):
+        """查看车身左侧检测结果"""
+        # 显示self.Leftcarbody_camera_id对应结果
+        self.current_camera_for_results = self.Leftcarbody_camera_id
+        self.viewDetectionResults()
+
+    def viewRightDetectionResults(self):
+        """查看车身右侧检测结果"""
+        # 显示self.Rightcarbody_camera_id对应结果
+        self.current_camera_for_results = self.Rightcarbody_camera_id
+        self.viewDetectionResults()
+
+    def viewRoofDetectionResults(self):
+        """查看车身顶部检测结果"""
+        # 显示self.Roofcarbody_camera_id对应结果
+        self.current_camera_for_results = self.Roofcarbody_camera_id
+        self.viewDetectionResults()
 
 
 if __name__ == "__main__":
