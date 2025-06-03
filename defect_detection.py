@@ -33,9 +33,12 @@ from utils.plots import plot_one_box
 
 # 在data文件夹下新建一个csv文件用于存储历史记录，如果存在则不建立
 if not os.path.exists('data/detect_history.csv'):
-    with open('data/detect_history.csv', 'w', newline='') as file:
+    os.makedirs('data', exist_ok=True)
+    with open('data/detect_history.csv', 'w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
-        writer.writerow(['timestamp', 'defect_type', 'car_color', 'dent_nums', 'scratch_nums', 'total_nums'])
+        writer.writerow(['timestamp', 'detection_time', 'timestamp_folder', 'detection_type', 'car_color',
+                        'dent_count', 'scratch_count', 'total_count', 'model_file', 'conf_threshold',
+                        'iou_threshold', 'result_path'])
 
 
 # 凹坑检测代码
@@ -340,6 +343,8 @@ def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf
 
     # 全局变量，用于统计缺陷编号
     detect_counter = 0
+    scratch_counter = 0  # 划痕计数器
+    dent_counter = 0     # 凹坑计数器
 
     # 运行推理
     t0 = time.time()
@@ -376,9 +381,16 @@ def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf
                     # 增加缺陷编号
                     detect_counter += 1
 
+                    # 根据类别分别计数
+                    class_id = int(cls)
+                    if class_id == 0:  # 划痕
+                        scratch_counter += 1
+                    elif class_id == 1:  # 凹坑
+                        dent_counter += 1
+
                     # 转换为整数以便于写入CSV
                     x_min, y_min, x_max, y_max = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
-                    class_name = names[int(cls)]
+                    class_name = names[class_id]
                     confidence = float(conf)
 
                     # 写入CSV
@@ -394,7 +406,8 @@ def detect(weights='weights/aoxian&huahen.pt', source='data', img_size=640, conf
 
     # 关闭CSV文件
     csv_file.close()
-    return detect_counter
+    # 返回详细的统计信息：(总数, 划痕数, 凹坑数)
+    return detect_counter, scratch_counter, dent_counter
 
 
 # 颜色识别代码color_detection
@@ -829,8 +842,8 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.camera_id = 0  # 摄像头编号
         self.camera_width = 1024  # 视频显示宽度
         self.camera_height = 576  # 视频显示高度
-        self.conf_thres = 0.5  # 置信度阈值
-        self.iou_thres = 0.5  # 交叉比阈值
+        self.conf_thres = 0.25  # 置信度阈值
+        self.iou_thres = 0.45  # 交叉比阈值
         self.Leftcarbody_camera_id = 0 # 左侧车身摄像头编号
         self.Rightcarbody_camera_id = 1 # 右侧车身摄像头编号
         self.Roofcarbody_camera_id = 2 # 车顶车身摄像头编号
@@ -1547,42 +1560,51 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
             # 执行检测
             total_defects = 0
+            scratch_count = 0
+            dent_count = 0
 
             if scratch_detection and dents_detection:
                 # 执行综合检测
                 self.textBrowser.append("执行综合缺陷检测（划痕+凹坑）...")
-                total_defects = detect(weights=weights,
-                                     source=source_folder,
-                                     conf_thres=conf_thres,
-                                     iou_thres=iou_thres,
-                                     timestamp=timestamp)
+                result = detect(weights=weights,
+                              source=source_folder,
+                              conf_thres=conf_thres,
+                              iou_thres=iou_thres,
+                              timestamp=timestamp)
+                total_defects, scratch_count, dent_count = result
 
             elif scratch_detection:
                 # 仅执行划痕检测
                 self.textBrowser.append("执行划痕检测...")
-                total_defects = scratch_detect(weights=weights,
+                scratch_count = scratch_detect(weights=weights,
                                              source=source_folder,
                                              conf_thres=conf_thres,
                                              iou_thres=iou_thres,
                                              timestamp=timestamp)
+                total_defects = scratch_count
+                dent_count = 0
 
             elif dents_detection:
                 # 仅执行凹坑检测
                 self.textBrowser.append("执行凹坑检测...")
-                total_defects = dent_detect(weights=weights,
-                                          source=source_folder,
-                                          conf_thres=conf_thres,
-                                          iou_thres=iou_thres,
-                                          timestamp=timestamp)
+                dent_count = dent_detect(weights=weights,
+                                       source=source_folder,
+                                       conf_thres=conf_thres,
+                                       iou_thres=iou_thres,
+                                       timestamp=timestamp)
+                total_defects = dent_count
+                scratch_count = 0
 
             # 显示检测结果
             self.textBrowser.append(f"检测完成！共发现 {total_defects} 个缺陷")
+            if scratch_detection and dents_detection:
+                self.textBrowser.append(f"其中：划痕 {scratch_count} 个，凹坑 {dent_count} 个")
             if timestamp:
                 self.textBrowser.append(f"检测结果已保存到：data/car_result/{timestamp}/")
             self.textBrowser.append("可以在'查看结果'标签页中查看详细结果")
 
             # 保存检测历史记录
-            self.save_detection_history(timestamp, total_defects, scratch_detection, dents_detection, weights, conf_thres, iou_thres)
+            self.save_detection_history(timestamp, total_defects, scratch_count, dent_count, scratch_detection, dents_detection, weights, conf_thres, iou_thres)
 
         except Exception as e:
             self.handle_thread_error(f"检测过程中发生错误: {str(e)}")
@@ -1592,7 +1614,7 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.pushButton_13.setEnabled(True)
         self.textBrowser.append("检测流程完成！")
 
-    def save_detection_history(self, timestamp, total_defects, scratch_detection, dents_detection, weights, conf_thres, iou_thres):
+    def save_detection_history(self, timestamp, total_defects, scratch_count, dent_count, scratch_detection, dents_detection, weights, conf_thres, iou_thres):
         """保存检测历史记录到CSV文件"""
         try:
             import datetime
@@ -1610,8 +1632,9 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
             with open(history_file, 'a', newline='', encoding='utf-8') as csvfile:
                 fieldnames = [
-                    '检测时间', '时间戳文件夹', '总缺陷数', '检测类型',
-                    '模型文件', '置信度阈值', 'IOU阈值', '结果路径'
+                    'timestamp', 'detection_time', 'timestamp_folder', 'detection_type', 'car_color',
+                    'dent_count', 'scratch_count', 'total_count', 'model_file', 'conf_threshold',
+                    'iou_threshold', 'result_path'
                 ]
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
@@ -1621,16 +1644,19 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
                 # 确定检测类型
                 if scratch_detection and dents_detection:
-                    detection_type = "综合检测（划痕+凹坑）"
+                    detection_type = "combined_detection"
                 elif scratch_detection:
-                    detection_type = "划痕检测"
+                    detection_type = "scratch_detection"
                 elif dents_detection:
-                    detection_type = "凹坑检测"
+                    detection_type = "dent_detection"
                 else:
-                    detection_type = "未知类型"
+                    detection_type = "unknown"
 
                 # 获取当前时间
                 current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # 生成时间戳（用于timestamp字段）
+                timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
                 # 构建结果路径
                 if timestamp:
@@ -1638,24 +1664,44 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
                     timestamp_folder = timestamp
                 else:
                     result_path = "runs/car*/"
-                    timestamp_folder = "无"
+                    timestamp_folder = "none"
+
+                # 尝试检测车身颜色（如果有图片的话）
+                car_color = "unknown"
+                try:
+                    if timestamp and os.path.exists(f"data/car_picture/{timestamp}"):
+                        # 查找第一张图片进行颜色检测
+                        picture_folder = f"data/car_picture/{timestamp}"
+                        for file in os.listdir(picture_folder):
+                            if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                                image_path = os.path.join(picture_folder, file)
+                                car_color = detect_color(image_path)
+                                break
+                except Exception as color_error:
+                    print(f"颜色检测失败: {color_error}")
+                    car_color = "unknown"
 
                 # 写入记录
                 writer.writerow({
-                    '检测时间': current_time,
-                    '时间戳文件夹': timestamp_folder,
-                    '总缺陷数': total_defects,
-                    '检测类型': detection_type,
-                    '模型文件': os.path.basename(weights),
-                    '置信度阈值': conf_thres,
-                    'IOU阈值': iou_thres,
-                    '结果路径': result_path
+                    'timestamp': timestamp_str,
+                    'detection_time': current_time,
+                    'timestamp_folder': timestamp_folder,
+                    'detection_type': detection_type,
+                    'car_color': car_color,
+                    'dent_count': dent_count,
+                    'scratch_count': scratch_count,
+                    'total_count': total_defects,
+                    'model_file': os.path.basename(weights),
+                    'conf_threshold': conf_thres,
+                    'iou_threshold': iou_thres,
+                    'result_path': result_path
                 })
 
-            self.textBrowser.append(f"检测历史记录已保存到：{history_file}")
+            self.textBrowser.append(f"检测历史保存至: {history_file}")
+            self.textBrowser.append(f"检测结果: {total_defects} 个总缺陷 ({scratch_count} 个划痕缺陷, {dent_count} 个凹坑缺陷)")
 
         except Exception as e:
-            self.textBrowser.append(f"保存检测历史记录时出错：{str(e)}")
+            self.textBrowser.append(f"保存历史记录失败，原因为: {str(e)}")
 
     def load_detection_history(self):
         """加载并返回检测历史记录"""
@@ -1681,32 +1727,36 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
             history_df = self.load_detection_history()
 
             if history_df is None or history_df.empty:
-                self.textBrowser.append("暂无检测历史记录")
+                self.textBrowser.append("No detection history found")
                 return
 
-            self.textBrowser.append("=== 检测历史记录 ===")
-            self.textBrowser.append(f"共有 {len(history_df)} 条记录：")
+            self.textBrowser.append("=== Detection History ===")
+            self.textBrowser.append(f"Total records: {len(history_df)}")
 
             # 显示最近的10条记录
             recent_records = history_df.tail(10)
 
             for index, row in recent_records.iterrows():
                 self.textBrowser.append(f"")
-                self.textBrowser.append(f"记录 {index + 1}:")
-                self.textBrowser.append(f"  检测时间: {row['检测时间']}")
-                self.textBrowser.append(f"  时间戳文件夹: {row['时间戳文件夹']}")
-                self.textBrowser.append(f"  检测类型: {row['检测类型']}")
-                self.textBrowser.append(f"  发现缺陷: {row['总缺陷数']} 个")
-                self.textBrowser.append(f"  模型文件: {row['模型文件']}")
-                self.textBrowser.append(f"  置信度阈值: {row['置信度阈值']}")
-                self.textBrowser.append(f"  结果路径: {row['结果路径']}")
+                self.textBrowser.append(f"Record {index + 1}:")
+                self.textBrowser.append(f"  Detection Time: {row['detection_time']}")
+                self.textBrowser.append(f"  Timestamp Folder: {row['timestamp_folder']}")
+                self.textBrowser.append(f"  Detection Type: {row['detection_type']}")
+                self.textBrowser.append(f"  Car Color: {row['car_color']}")
+                self.textBrowser.append(f"  Total Defects: {row['total_count']}")
+                self.textBrowser.append(f"  Scratches: {row['scratch_count']}")
+                self.textBrowser.append(f"  Dents: {row['dent_count']}")
+                self.textBrowser.append(f"  Model File: {row['model_file']}")
+                self.textBrowser.append(f"  Confidence Threshold: {row['conf_threshold']}")
+                self.textBrowser.append(f"  IoU Threshold: {row['iou_threshold']}")
+                self.textBrowser.append(f"  Result Path: {row['result_path']}")
 
             if len(history_df) > 10:
                 self.textBrowser.append(f"")
-                self.textBrowser.append(f"注：仅显示最近10条记录，完整记录请查看 data/detect_history.csv")
+                self.textBrowser.append(f"Note: Only showing the latest 10 records. Check data/detect_history.csv for complete history")
 
         except Exception as e:
-            self.textBrowser.append(f"显示检测历史记录时出错：{str(e)}")
+            self.textBrowser.append(f"Error displaying detection history: {str(e)}")
 
     def testCloudService(self):
         """测试云服务连接"""
