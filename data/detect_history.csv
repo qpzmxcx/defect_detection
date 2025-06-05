@@ -1,2 +1,1 @@
 timestamp,detection_time,timestamp_folder,detection_type,car_color,dent_count,scratch_count,total_count,model_file,conf_threshold,iou_threshold,result_path
-20250603_224541,2025-06-03 22:45:41,20250603_224519,combined_detection,black,0,8,8,aoxian&huahen.pt,0.25,0.45,data/car_result/20250603_224519/
