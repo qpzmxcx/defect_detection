@@ -1363,6 +1363,10 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         self.pushButton_9.clicked.connect(self.viewRightDetectionResults)
         self.pushButton_8.clicked.connect(self.viewRoofDetectionResults)
 
+        # 初始化历史记录界面
+        self.initializeHistoryView()
+        self.loadHistoryRecords()
+
     # 各种功能方法
     def viewLeftcarbody(self):
         """查看车身左侧"""
@@ -1887,16 +1891,34 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
 
     def searchHistory(self):
         """搜索历史检测记录"""
-        start_date = self.dateEdit_3.date().toString("yyyy-MM-dd")
-        end_date = self.dateEdit.date().toString("yyyy-MM-dd")
-        defect_type = self.comboBox_6.currentText()
+        try:
+            start_date = self.dateEdit_3.date().toString("yyyy-MM-dd")
+            end_date = self.dateEdit.date().toString("yyyy-MM-dd")
+            defect_type = self.comboBox_6.currentText()
 
-        self.textBrowser.append(f"搜索时间范围: {start_date} 至 {end_date}")
-        self.textBrowser.append(f"缺陷类型: {defect_type}")
-        self.textBrowser.append("正在搜索历史记录...")
+            # 清空当前显示的记录
+            self.clearHistoryDisplay()
 
-        # 模拟搜索结果
-        QtCore.QTimer.singleShot(1000, lambda: self.textBrowser.append("搜索完成，找到3条记录"))
+            # 读取历史记录并过滤
+            filtered_records = self.filterHistoryRecords(start_date, end_date, defect_type)
+
+            # 显示过滤后的记录
+            self.displayHistoryRecords(filtered_records)
+
+            # 显示搜索结果统计
+            record_count = len(filtered_records) if filtered_records else 0
+            search_info = f"搜索完成：时间范围 {start_date} 至 {end_date}"
+            if defect_type != "所有":
+                search_info += f"，缺陷类型：{defect_type}"
+            search_info += f"，找到 {record_count} 条记录"
+
+            # 在状态栏显示搜索结果
+            if hasattr(self, 'statusbar'):
+                self.statusbar.showMessage(search_info, 5000)  # 显示5秒
+
+        except Exception as e:
+            if hasattr(self, 'statusbar'):
+                self.statusbar.showMessage(f"搜索历史记录时出错：{str(e)}", 5000)
 
     def updateDetectionSettings(self):
         """更新检测设置（划痕/凹坑检测）"""
@@ -2640,6 +2662,378 @@ class DefectDetectionApp(QtWidgets.QMainWindow):
         # 显示self.Roofcarbody_camera_id对应结果
         self.current_camera_for_results = self.Roofcarbody_camera_id
         self.viewDetectionResults()
+
+    # 历史记录相关方法
+    def initializeHistoryView(self):
+        """初始化历史记录界面"""
+        try:
+            # 创建滚动区域的布局
+            self.history_layout = QtWidgets.QVBoxLayout()
+            self.history_layout.setSpacing(5)  # 设置间距
+            self.history_layout.setContentsMargins(10, 10, 10, 10)  # 设置边距
+
+            # 设置滚动区域内容的布局
+            self.scrollAreaWidgetContents.setLayout(self.history_layout)
+
+            # 存储历史记录项的列表
+            self.history_record_widgets = []
+
+        except Exception as e:
+            print(f"初始化历史记录界面时出错：{str(e)}")
+
+    def loadHistoryRecords(self):
+        """加载所有历史记录"""
+        try:
+            # 读取历史记录文件
+            history_file = 'data/detect_history.csv'
+            if not os.path.exists(history_file):
+                self.displayNoHistoryMessage()
+                return
+
+            # 读取CSV文件
+            import csv
+            records = []
+            with open(history_file, 'r', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    records.append(row)
+
+            # 按时间戳倒序排列（最新的在前面）
+            records.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+            # 显示记录
+            self.displayHistoryRecords(records)
+
+        except Exception as e:
+            print(f"加载历史记录时出错：{str(e)}")
+            self.displayNoHistoryMessage()
+
+    def displayNoHistoryMessage(self):
+        """显示无历史记录的提示信息"""
+        try:
+            # 清空现有内容
+            self.clearHistoryDisplay()
+
+            # 创建提示标签
+            no_data_label = QtWidgets.QLabel("暂无历史检测记录")
+            no_data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            no_data_label.setStyleSheet("""
+                QLabel {
+                    color: #666666;
+                    font-size: 16px;
+                    padding: 50px;
+                    background-color: #f5f5f5;
+                    border: 2px dashed #cccccc;
+                    border-radius: 10px;
+                }
+            """)
+
+            self.history_layout.addWidget(no_data_label)
+            self.history_layout.addStretch()  # 添加弹性空间
+
+        except Exception as e:
+            print(f"显示无历史记录提示时出错：{str(e)}")
+
+    def clearHistoryDisplay(self):
+        """清空历史记录显示"""
+        try:
+            # 清空布局中的所有控件
+            while self.history_layout.count():
+                child = self.history_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+
+            # 清空记录列表
+            self.history_record_widgets.clear()
+
+        except Exception as e:
+            print(f"清空历史记录显示时出错：{str(e)}")
+
+    def displayHistoryRecords(self, records):
+        """显示历史记录列表"""
+        try:
+            # 清空现有显示
+            self.clearHistoryDisplay()
+
+            if not records:
+                self.displayNoHistoryMessage()
+                return
+
+            # 为每条记录创建显示控件
+            for record in records:
+                record_widget = self.createHistoryRecordWidget(record)
+                if record_widget:
+                    self.history_layout.addWidget(record_widget)
+                    self.history_record_widgets.append(record_widget)
+
+            # 添加弹性空间，使记录靠上显示
+            self.history_layout.addStretch()
+
+        except Exception as e:
+            print(f"显示历史记录时出错：{str(e)}")
+
+    def createHistoryRecordWidget(self, record):
+        """为单条历史记录创建显示控件"""
+        try:
+            # 创建主容器
+            record_frame = QtWidgets.QFrame()
+            record_frame.setFrameStyle(QtWidgets.QFrame.Shape.Box)
+            record_frame.setStyleSheet("""
+                QFrame {
+                    background-color: white;
+                    border: 1px solid #ddd;
+                    border-radius: 8px;
+                    padding: 10px;
+                    margin: 2px;
+                }
+                QFrame:hover {
+                    background-color: #f0f8ff;
+                    border-color: #4a90e2;
+                    cursor: pointer;
+                }
+            """)
+            record_frame.setFixedHeight(120)  # 设置固定高度
+
+            # 创建布局
+            layout = QtWidgets.QHBoxLayout(record_frame)
+            layout.setContentsMargins(15, 10, 15, 10)
+            layout.setSpacing(20)
+
+            # 左侧：时间和基本信息
+            left_layout = QtWidgets.QVBoxLayout()
+            left_layout.setSpacing(5)
+
+            # 检测时间
+            time_label = QtWidgets.QLabel(f"检测时间：{record.get('timestamp', 'N/A')}")
+            time_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #2c3e50;")
+            left_layout.addWidget(time_label)
+
+            # 检测类型和车身颜色
+            type_color_text = f"检测类型：{self.getDetectionTypeDisplay(record.get('detection_type', 'N/A'))} | 车身颜色：{record.get('car_color', 'N/A')}"
+            type_color_label = QtWidgets.QLabel(type_color_text)
+            type_color_label.setStyleSheet("font-size: 12px; color: #34495e;")
+            left_layout.addWidget(type_color_label)
+
+            # 结果文件夹
+            folder_label = QtWidgets.QLabel(f"结果文件夹：{record.get('timestamp_folder', 'N/A')}")
+            folder_label.setStyleSheet("font-size: 11px; color: #7f8c8d;")
+            left_layout.addWidget(folder_label)
+
+            layout.addLayout(left_layout, 3)  # 占3份空间
+
+            # 中间：缺陷统计
+            middle_layout = QtWidgets.QVBoxLayout()
+            middle_layout.setSpacing(5)
+
+            # 缺陷数量标题
+            defect_title = QtWidgets.QLabel("缺陷统计")
+            defect_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #e74c3c;")
+            defect_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            middle_layout.addWidget(defect_title)
+
+            # 缺陷数量信息
+            scratch_count = record.get('scratch_count', '0')
+            dent_count = record.get('dent_count', '0')
+            total_count = record.get('total_count', '0')
+
+            defect_info = f"划痕：{scratch_count} | 凹坑：{dent_count} | 总计：{total_count}"
+            defect_label = QtWidgets.QLabel(defect_info)
+            defect_label.setStyleSheet("font-size: 11px; color: #e74c3c;")
+            defect_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            middle_layout.addWidget(defect_label)
+
+            layout.addLayout(middle_layout, 2)  # 占2份空间
+
+            # 右侧：检测参数
+            right_layout = QtWidgets.QVBoxLayout()
+            right_layout.setSpacing(5)
+
+            # 检测参数标题
+            param_title = QtWidgets.QLabel("检测参数")
+            param_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #3498db;")
+            param_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            right_layout.addWidget(param_title)
+
+            # 置信度和交叉比
+            conf_thres = record.get('conf_threshold', 'N/A')
+            iou_thres = record.get('iou_threshold', 'N/A')
+            param_info = f"置信度：{conf_thres} | 交叉比：{iou_thres}"
+            param_label = QtWidgets.QLabel(param_info)
+            param_label.setStyleSheet("font-size: 11px; color: #3498db;")
+            param_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            right_layout.addWidget(param_label)
+
+            # 模型文件
+            model_file = record.get('model_file', 'N/A')
+            if len(model_file) > 25:  # 如果文件名太长，截断显示
+                model_file = "..." + model_file[-22:]
+            model_label = QtWidgets.QLabel(f"模型：{model_file}")
+            model_label.setStyleSheet("font-size: 10px; color: #95a5a6;")
+            model_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            right_layout.addWidget(model_label)
+
+            layout.addLayout(right_layout, 2)  # 占2份空间
+
+            # 为控件添加点击事件
+            record_frame.mousePressEvent = lambda event, r=record: self.onHistoryRecordClicked(r)
+
+            # 存储记录数据到控件属性中
+            record_frame.record_data = record
+
+            return record_frame
+
+        except Exception as e:
+            print(f"创建历史记录控件时出错：{str(e)}")
+            return None
+
+    def getDetectionTypeDisplay(self, detection_type):
+        """获取检测类型的中文显示名称"""
+        type_mapping = {
+            'combined_detection': '综合检测',
+            'scratch_detection': '划痕检测',
+            'dent_detection': '凹坑检测'
+        }
+        return type_mapping.get(detection_type, detection_type)
+
+    def filterHistoryRecords(self, start_date, end_date, defect_type):
+        """根据条件过滤历史记录"""
+        try:
+            # 读取历史记录文件
+            history_file = 'data/detect_history.csv'
+            if not os.path.exists(history_file):
+                return []
+
+            import csv
+            from datetime import datetime
+
+            filtered_records = []
+
+            with open(history_file, 'r', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    # 检查日期范围 - 处理时间戳格式转换
+                    timestamp = row.get('timestamp', '')
+                    if timestamp:
+                        try:
+                            # 将时间戳格式 20250603_183657 转换为 2025-06-03 进行比较
+                            if len(timestamp) >= 8:
+                                date_part = timestamp[:8]  # 取前8位：20250603
+                                # 转换为 YYYY-MM-DD 格式
+                                formatted_date = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+
+                                if start_date <= formatted_date <= end_date:
+                                    # 检查缺陷类型
+                                    if defect_type == "所有":
+                                        filtered_records.append(row)
+                                    elif defect_type == "划痕":
+                                        # 检查是否包含划痕检测
+                                        detection_type = row.get('detection_type', '')
+                                        scratch_count = int(row.get('scratch_count', '0'))
+                                        if detection_type in ['scratch_detection', 'combined_detection'] or scratch_count > 0:
+                                            filtered_records.append(row)
+                                    elif defect_type == "凹坑":
+                                        # 检查是否包含凹坑检测
+                                        detection_type = row.get('detection_type', '')
+                                        dent_count = int(row.get('dent_count', '0'))
+                                        if detection_type in ['dent_detection', 'combined_detection'] or dent_count > 0:
+                                            filtered_records.append(row)
+                        except (ValueError, IndexError) as e:
+                            # 如果时间戳格式不正确，跳过这条记录
+                            continue
+
+            # 按时间戳倒序排列
+            filtered_records.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+            return filtered_records
+
+        except Exception as e:
+            print(f"过滤历史记录时出错：{str(e)}")
+            return []
+
+    def onHistoryRecordClicked(self, record):
+        """处理历史记录点击事件"""
+        try:
+            # 获取时间戳文件夹
+            timestamp_folder = record.get('timestamp_folder', '')
+
+            if not timestamp_folder:
+                if hasattr(self, 'statusbar'):
+                    self.statusbar.showMessage("错误：记录中缺少时间戳文件夹信息", 3000)
+                return
+
+            # 检查文件夹是否存在
+            result_folder = f"data/car_result/{timestamp_folder}"
+            if not os.path.exists(result_folder):
+                if hasattr(self, 'statusbar'):
+                    self.statusbar.showMessage(f"错误：结果文件夹不存在 - {result_folder}", 3000)
+                return
+
+            # 更新查看结果界面的时间戳
+            self.latest_timestamp = timestamp_folder
+
+            # 切换到查看结果标签页
+            self.tabWidget.setCurrentIndex(1)  # 假设查看结果是第二个标签页（索引1）
+
+            # 更新查看结果界面
+            self.updateResultsViewFromHistory(record)
+
+            # 显示状态信息
+            if hasattr(self, 'statusbar'):
+                self.statusbar.showMessage(f"已跳转到查看结果界面 - {timestamp_folder}", 3000)
+
+        except Exception as e:
+            print(f"处理历史记录点击事件时出错：{str(e)}")
+            if hasattr(self, 'statusbar'):
+                self.statusbar.showMessage(f"跳转失败：{str(e)}", 3000)
+
+    def updateResultsViewFromHistory(self, record):
+        """从历史记录更新查看结果界面"""
+        try:
+            # 在textBrowser_2中显示选择的历史记录信息
+            self.textBrowser_2.clear()
+            self.textBrowser_2.append("=" * 60)
+            self.textBrowser_2.append("从历史记录加载检测结果")
+            self.textBrowser_2.append("=" * 60)
+            self.textBrowser_2.append(f"检测时间：{record.get('timestamp', 'N/A')}")
+            self.textBrowser_2.append(f"检测类型：{self.getDetectionTypeDisplay(record.get('detection_type', 'N/A'))}")
+            self.textBrowser_2.append(f"车身颜色：{record.get('car_color', 'N/A')}")
+            self.textBrowser_2.append(f"时间戳文件夹：{record.get('timestamp_folder', 'N/A')}")
+            self.textBrowser_2.append("")
+            self.textBrowser_2.append("缺陷统计：")
+            self.textBrowser_2.append(f"  划痕数量：{record.get('scratch_count', '0')}")
+            self.textBrowser_2.append(f"  凹坑数量：{record.get('dent_count', '0')}")
+            self.textBrowser_2.append(f"  总计数量：{record.get('total_count', '0')}")
+            self.textBrowser_2.append("")
+            self.textBrowser_2.append("检测参数：")
+            self.textBrowser_2.append(f"  置信度阈值：{record.get('conf_threshold', 'N/A')}")
+            self.textBrowser_2.append(f"  交叉比阈值：{record.get('iou_threshold', 'N/A')}")
+            self.textBrowser_2.append(f"  模型文件：{record.get('model_file', 'N/A')}")
+            self.textBrowser_2.append("")
+            self.textBrowser_2.append("请选择摄像头编号并点击'查看'按钮查看具体检测结果")
+
+            # 根据检测类型设置复选框状态
+            detection_type = record.get('detection_type', '')
+            if detection_type == "combined_detection":
+                self.checkBox_5.setChecked(True)   # 查看凹坑
+                self.checkBox_6.setChecked(True)   # 查看划痕
+                self.checkBox_7.setChecked(True)   # 所有
+            elif detection_type == "scratch_detection":
+                self.checkBox_5.setChecked(False)  # 查看凹坑
+                self.checkBox_6.setChecked(True)   # 查看划痕
+                self.checkBox_7.setChecked(False)  # 所有
+            elif detection_type == "dent_detection":
+                self.checkBox_5.setChecked(True)   # 查看凹坑
+                self.checkBox_6.setChecked(False)  # 查看划痕
+                self.checkBox_7.setChecked(False)  # 所有
+            else:
+                self.checkBox_5.setChecked(False)
+                self.checkBox_6.setChecked(False)
+                self.checkBox_7.setChecked(True)
+
+        except Exception as e:
+            print(f"从历史记录更新查看结果界面时出错：{str(e)}")
+            if hasattr(self, 'textBrowser_2'):
+                self.textBrowser_2.append(f"更新界面时出错：{str(e)}")
 
 
 if __name__ == "__main__":
